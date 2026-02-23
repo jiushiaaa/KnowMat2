@@ -113,15 +113,40 @@ data/processed/
 
 3. **Configure API Keys**:
    
-   Rename the provided example file `.env_example` to `.env` and add your API keys.
+   **Obtaining API Keys:**
+   
+   - **OpenAI API Key** (required):
+     1. Visit [https://platform.openai.com](https://platform.openai.com)
+     2. Sign up or log in to your account
+     3. Navigate to API Keys section
+     4. Click "Create new secret key" and copy it
+     5. **Important**: Save the key immediately; you won't be able to view it again
+   
+   - **LangChain API Key** (optional, for LangSmith tracing):
+     1. Visit [https://smith.langchain.com](https://smith.langchain.com)
+     2. Sign up or log in to your account
+     3. Navigate to Settings → API Keys
+     4. Click "Create API Key" and copy it
+     5. Note: LangSmith tracing is optional but recommended for debugging
+   
+   **Setting API Keys:**
+   
+   Rename the provided example file `.env_example` to `.env` and add your API keys:
+   ```bash
+   OPENAI_API_KEY=<your_openai_api_key_here>
+   LANGCHAIN_API_KEY=<your_langchain_api_key_here>  # Optional
+   LANGCHAIN_TRACING_V2=true  # Enable tracing (optional)
+   ```
    
    Alternatively, set as environment variables:
    ```bash
    # Windows PowerShell
    $env:OPENAI_API_KEY="your_key"
+   $env:LANGCHAIN_API_KEY="your_key"  # Optional
    
    # Linux/Mac
    export OPENAI_API_KEY="your_key"
+   export LANGCHAIN_API_KEY="your_key"  # Optional
    ```
    
    If not set, KnowMat will prompt you interactively on first run.
@@ -391,7 +416,7 @@ KnowMat supports per-agent model configuration, allowing you to balance cost and
 ```
 Error: OPENAI_API_KEY not set
 ```
-**Solution**: Create `.env` file or set environment variable:
+**Solution**: Obtain an OpenAI API key from [https://platform.openai.com](https://platform.openai.com) and configure it according to the [Configure API Keys](#configure-api-keys) section in the Installation instructions. You can create a `.env` file or set it as an environment variable:
 ```bash
 export OPENAI_API_KEY="your_key"
 ```
