@@ -198,13 +198,114 @@ def _infer_precipitates(char_text: str) -> bool:
     return any(kw in ctext for kw in keywords)
 
 
-def _to_target_schema(data: dict, source_path: str, paper_text: Optional[str] = None) -> dict:
+def _parse_key_params(process_text: str, processing_params: Optional[dict] = None) -> dict:
+    """Build structured Key_Params_JSON from LLM output or regex on process text.
+
+    Priority: use ``processing_params`` from LLM if available, otherwise fall
+    back to regex extraction from ``process_text``.  Only keys with actual
+    values are included (no nulls).
+    """
+    params: dict = {}
+
+    if processing_params and isinstance(processing_params, dict):
+        for k, v in processing_params.items():
+            if v is not None:
+                params[k] = v
+
+    if params:
+        return params
+
+    if not process_text:
+        return params
+
+    t = process_text
+
+    # Laser power (W)
+    m = re.search(r"(?:laser\s+power|power)\s*[=:]\s*(\d+(?:\.\d+)?)\s*W", t, re.IGNORECASE)
+    if not m:
+        m = re.search(r"P\s*=\s*(\d+(?:\.\d+)?)\s*W", t)
+    if m:
+        params["Laser_Power_W"] = float(m.group(1))
+
+    # Scan speed (mm/s)
+    m = re.search(r"(?:scan(?:ning)?\s+speed|scanning\s+velocity)\s*[=:]\s*(\d+(?:\.\d+)?)\s*mm/s", t, re.IGNORECASE)
+    if not m:
+        m = re.search(r"v\s*=\s*(\d+(?:\.\d+)?)\s*mm/s", t)
+    if m:
+        params["Scan_Speed_mm_s"] = float(m.group(1))
+
+    # Layer thickness (μm)
+    m = re.search(r"layer\s+thickness\s*[=:]\s*(\d+(?:\.\d+)?)\s*(?:μm|um|µm)", t, re.IGNORECASE)
+    if not m:
+        m = re.search(r"t\s*=\s*(\d+(?:\.\d+)?)\s*(?:μm|um|µm)", t)
+    if m:
+        params["Layer_Thickness_um"] = float(m.group(1))
+
+    # Hatch spacing (μm)
+    for pattern in [
+        r"hatch(?:ing)?\s+spac(?:e|ing)\s*[=:]\s*(\d+(?:\.\d+)?)\s*(?:μm|um|µm)",
+        r"line\s+spacing\s*[=:]\s*(\d+(?:\.\d+)?)\s*(?:μm|um|µm)",
+        r"h\s*=\s*(\d+(?:\.\d+)?)\s*(?:μm|um|µm)",
+    ]:
+        m = re.search(pattern, t, re.IGNORECASE)
+        if m:
+            params["Hatch_Spacing_um"] = float(m.group(1))
+            break
+
+    # Preheat temperature (°C)
+    m = re.search(r"(?:preheat|preheating|substrate)\s+(?:temperature|temp)\s*[=:]\s*(\d+(?:\.\d+)?)\s*°?\s*C", t, re.IGNORECASE)
+    if m:
+        params["Preheat_Temperature_C"] = float(m.group(1))
+
+    # Shielding gas
+    if re.search(r"\bargon\b", t, re.IGNORECASE):
+        params["Shielding_Gas"] = "Ar"
+    elif re.search(r"\bnitrogen\b", t, re.IGNORECASE):
+        params["Shielding_Gas"] = "N2"
+
+    # Oxygen content (ppm)
+    m = re.search(r"oxygen\s+(?:content\s+)?(?:below|<|under)?\s*(\d+)\s*ppm", t, re.IGNORECASE)
+    if m:
+        params["Oxygen_Content_ppm"] = float(m.group(1))
+
+    return params
+
+
+def _build_microstructure_text(comp: dict) -> str:
+    """Build Microstructure_Text_For_AI from new separate fields or legacy characterisation."""
+    # Prefer the new dedicated field
+    micro_desc = comp.get("microstructure_description")
+    if micro_desc and micro_desc.strip():
+        return micro_desc.strip()
+
+    # Fall back to characterisation dict, but ONLY the Microstructure/EBSD/SEM/TEM keys
+    char = comp.get("characterisation")
+    if isinstance(char, dict):
+        parts = []
+        for key in ("Microstructure", "EBSD", "SEM", "TEM"):
+            val = char.get(key)
+            if val and isinstance(val, str) and val.strip():
+                parts.append(f"{key}: {val.strip()}")
+        if parts:
+            return "; ".join(parts)
+        # Legacy format: flatten all but still return
+        all_parts = [f"{k}: {v}" for k, v in char.items() if isinstance(v, str) and v.strip()]
+        if all_parts:
+            return "; ".join(all_parts)
+
+    return "not provided"
+
+
+def _to_target_schema(data: dict, source_path: str, paper_text: Optional[str] = None,
+                      document_metadata: Optional[dict] = None) -> dict:
     """Convert internal extraction schema to target HEA dataset schema.
-    
-    New behavior:
-    - Filters out compositions where role != "Target"
-    - Groups compositions by normalized formula (removing condition suffixes like '[As-Built]')
-    - Creates one Material per unique formula with multiple Samples for different conditions
+
+    Improvements over v2.0:
+    - 3-tier DOI priority: LLM field → OCR document_metadata → regex on paper_text
+    - Key_Params_JSON populated from LLM processing_params or regex on process text
+    - Microstructure_Text_For_AI uses dedicated microstructure_description (not XRD)
+    - Grain_Size_avg_um backfilled from properties if LLM field is empty
+    - Build orientation encoded in Sample_ID and condition suffix
     """
     if not isinstance(data, dict):
         return {"Dataset_Description": "High Entropy Alloy Data Extraction Template", "Materials": []}
@@ -215,36 +316,31 @@ def _to_target_schema(data: dict, source_path: str, paper_text: Optional[str] = 
     
     compositions = data.get("compositions", []) or []
     source_name = os.path.basename(source_path)
-    source_doi = _extract_first_doi(paper_text)
-    
-    # Helper functions (defined first to be accessible in loops)
+
+    # Global DOI: OCR metadata → regex on paper_text
+    ocr_doi = (document_metadata or {}).get("doi") if document_metadata else None
+    regex_doi = _extract_first_doi(paper_text)
+    global_doi = ocr_doi or regex_doi or ""
+
     def normalize_property_name(name: Optional[str]) -> Optional[str]:
-        """Map common property name variants to standardized names."""
         if not name:
             return name
         key = name.strip().lower()
         mapping = {
-            # Mechanical - Tensile
             "yield strength": "Yield_Strength",
             "compressive yield strength": "Yield_Strength",
             "ultimate tensile strength": "Ultimate_Tensile_Strength",
             "ultimate compressive strength": "Ultimate_Compressive_Strength",
             "tensile strength": "Ultimate_Tensile_Strength",
             "uts": "Ultimate_Tensile_Strength",
-            
-            # Mechanical - Elongation
             "total elongation": "Total_Elongation",
             "uniform elongation": "Uniform_Elongation",
             "elongation": "Elongation",
             "fracture strain": "Fracture_Strain",
             "ductility": "Elongation",
-            
-            # Mechanical - Modulus
             "young's modulus": "Youngs_Modulus",
             "elastic modulus": "Youngs_Modulus",
             "modulus": "Youngs_Modulus",
-            
-            # Microstructure
             "grain size": "Grain_Size",
             "average grain size": "Grain_Size",
             "grain diameter": "Grain_Size",
@@ -252,8 +348,6 @@ def _to_target_schema(data: dict, source_path: str, paper_text: Optional[str] = 
             "density": "Density",
             "porosity": "Porosity",
             "dislocation density": "Dislocation_Density",
-            
-            # Thermal/Physical
             "lattice parameter": "Lattice_Parameter",
             "lattice constant": "Lattice_Parameter",
             "stacking fault energy": "Stacking_Fault_Energy",
@@ -262,63 +356,35 @@ def _to_target_schema(data: dict, source_path: str, paper_text: Optional[str] = 
         return mapping.get(key, re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_"))
 
     def infer_process_category(process_text: str) -> str:
-        """Infer manufacturing process category from processing conditions text."""
         t = (process_text or "").lower()
-        
-        # Additive Manufacturing - DED
         if any(k in t for k in ("lens", "ded", "directed energy deposition", "laser-engineered net shaping", "laser cladding")):
             return "AM_DED"
-        
-        # Additive Manufacturing - LPBF
         if any(k in t for k in ("lpbf", "l-pbf", "laser powder bed fusion", "powder bed fusion")):
             return "AM_LPBF"
-        
-        # Additive Manufacturing - SLM (more specific than LPBF)
         if any(k in t for k in ("slm", "selective laser melting")):
             return "AM_SLM"
-        
-        # Additive Manufacturing - WAAM
         if any(k in t for k in ("waam", "wire arc additive", "wire + arc")):
             return "WAAM"
-        
-        # Additive Manufacturing - EBM
         if any(k in t for k in ("ebm", "electron beam melting")):
             return "EBM"
-        
-        # Spark Plasma Sintering
         if any(k in t for k in ("sps", "spark plasma sintering")):
             return "SPS"
-        
-        # Hot Isostatic Pressing
         if any(k in t for k in ("hip", "hot isostatic pressing")):
             return "HIP"
-        
-        # Arc Melting
         if any(k in t for k in ("arc melting", "vacuum arc melting", "arc-melting")):
             return "Arc_Melting"
-        
-        # Heat Treatment (post-processing only)
         if any(k in t for k in ("heat treat", "annealed", "annealing", "aged", "aging", "solution treatment", "quench")):
             return "HeatTreat"
-        
-        # Casting
         if any(k in t for k in ("cast", "casting", "melt spinning", "suction casting", "induction melting")):
             return "Casting"
-        
-        # Forging
         if any(k in t for k in ("forging", "forged", "hot forging", "cold forging")):
             return "Forging"
-        
-        # Rolling
         if any(k in t for k in ("rolling", "rolled", "hot rolling", "cold rolling")):
             return "Rolling"
-        
-        # Mechanical Alloying
         if any(k in t for k in ("mechanical alloying", "ball milling", "high-energy ball milling")):
             return "Mechanical_Alloying"
-        
         return "Unknown"
-    
+
     # Step 1: Filter only Target materials
     target_compositions = [c for c in compositions if c.get("role", "Target") == "Target"]
     
@@ -326,52 +392,65 @@ def _to_target_schema(data: dict, source_path: str, paper_text: Optional[str] = 
     groups = defaultdict(list)
     for comp in target_compositions:
         comp_raw = comp.get("composition", "") or ""
-        # Prioritize LLM's composition_normalized
         formula_norm = comp.get("composition_normalized")
         if not formula_norm:
             formula_norm = comp_raw.replace(" ", "")
-        
-        # Remove condition suffix like '[As-Built]' or '[Annealed 973K/64h]' to get base formula
         base_formula = re.sub(r"\s*\[.*?\]\s*$", "", formula_norm).strip()
         if not base_formula:
-            base_formula = formula_norm  # Fallback if no condition suffix
-        
+            base_formula = formula_norm
         groups[base_formula].append(comp)
     
     materials = []
 
-    # Step 3: Build Materials with multiple Samples
     for mat_idx, (base_formula, comps) in enumerate(sorted(groups.items()), start=1):
-        # Use first composition's metadata for Material-level fields
         first_comp = comps[0]
         comp_raw_first = first_comp.get("composition", "") or ""
         
-        # Material-level DOI: prioritize LLM output, fallback to global
-        material_doi = first_comp.get("source_doi")
-        if not material_doi:
-            material_doi = source_doi
+        # DOI: LLM per-composition → OCR → regex (3-tier)
+        material_doi = first_comp.get("source_doi") or global_doi
         
-        # Build Samples from each composition in this group
         samples = []
         for s_idx, comp in enumerate(comps, start=1):
             comp_raw = comp.get("composition", "") or ""
             
-            # Extract condition suffix for Sample_ID
+            # Build condition suffix from [bracket] tag AND build_orientation
             match = re.search(r"\[(.*?)\]\s*$", comp_raw)
-            condition_suffix = match.group(1).replace(" ", "_") if match else "Default"
+            bracket_suffix = match.group(1).replace(" ", "_") if match else ""
+            orientation = comp.get("build_orientation") or ""
+            orientation_suffix = orientation.replace(" ", "_").replace("/", "-") if orientation else ""
+
+            if bracket_suffix and orientation_suffix:
+                condition_suffix = f"{bracket_suffix}_{orientation_suffix}"
+            elif bracket_suffix:
+                condition_suffix = bracket_suffix
+            elif orientation_suffix:
+                condition_suffix = orientation_suffix
+            else:
+                condition_suffix = "Default"
             
             # Build Performance_Tests from properties
             props = comp.get("properties_of_composition", []) or []
             tests = []
+            grain_size_from_props = None
             for j, p in enumerate(props, start=1):
                 numeric_val = p.get("value_numeric")
+                prop_std_name = normalize_property_name(p.get("property_name"))
+
+                # Capture grain size from properties for backfill
+                if prop_std_name == "Grain_Size" and numeric_val is not None:
+                    unit = (p.get("unit") or "").lower().strip()
+                    if "nm" in unit:
+                        grain_size_from_props = numeric_val / 1000.0
+                    else:
+                        grain_size_from_props = numeric_val
+
                 if numeric_val is None:
                     continue
                 tests.append(
                     {
                         "Test_ID": f"T{j:03d}",
                         "Test_Temperature_K": _parse_temperature_to_k(p.get("measurement_condition")),
-                        "Property_Type": normalize_property_name(p.get("property_name")),
+                        "Property_Type": prop_std_name,
                         "Property_Value": numeric_val,
                         "Property_Unit": p.get("unit"),
                     }
@@ -380,47 +459,54 @@ def _to_target_schema(data: dict, source_path: str, paper_text: Optional[str] = 
             process_text = comp.get("processing_conditions")
             if isinstance(process_text, dict):
                 process_text = json.dumps(process_text, ensure_ascii=False)
-            char_text = comp.get("characterisation")
-            if isinstance(char_text, dict):
-                char_text = "; ".join([f"{k}: {v}" for k, v in char_text.items()])
-            
-            # Prioritize LLM outputs, fallback to inference
+
+            # Build microstructure text from dedicated field (not XRD)
+            microstructure_text = _build_microstructure_text(comp)
+
             main_phase = comp.get("main_phase")
             if not main_phase:
-                main_phase = _infer_main_phase(char_text or "")
+                main_phase = _infer_main_phase(microstructure_text)
             
             has_precipitates_val = comp.get("has_precipitates")
             if has_precipitates_val is None:
-                has_precipitates_val = _infer_precipitates(char_text or "")
+                has_precipitates_val = _infer_precipitates(microstructure_text)
             
+            # Grain size: LLM field → backfill from properties
             grain_size_um = comp.get("grain_size_avg_um")
+            if grain_size_um is None and grain_size_from_props is not None:
+                grain_size_um = grain_size_from_props
             
             process_category = comp.get("process_category")
             if not process_category or process_category == "Unknown":
                 process_category = infer_process_category(process_text or "")
-            
+
+            # Key_Params_JSON: LLM structured params → regex on process text
+            key_params = _parse_key_params(
+                process_text or "",
+                comp.get("processing_params"),
+            )
+            if orientation and "Build_Orientation" not in key_params:
+                key_params["Build_Orientation"] = orientation
+
             sample = {
                 "Sample_ID": f"S{mat_idx:03d}_{s_idx:02d}_{condition_suffix}",
                 "Process_Category": process_category,
                 "Process_Text_For_AI": process_text or "not provided",
-                "Key_Params_JSON": {},
+                "Key_Params_JSON": key_params,
                 "Main_Phase": main_phase or "",
-                "Microstructure_Text_For_AI": char_text or "not provided",
+                "Microstructure_Text_For_AI": microstructure_text,
                 "Has_Precipitates": has_precipitates_val,
                 "Grain_Size_avg_um": grain_size_um,
                 "Performance_Tests": tests,
             }
             samples.append(sample)
         
-        # Build and validate Composition_JSON
         raw_comp_json = _build_composition_json(base_formula)
         validated_comp_json, comp_warnings = _validate_composition_json(raw_comp_json, base_formula)
         
-        # Print warnings if any
         for warning in comp_warnings:
             print(f"[COMPOSITION WARNING] {warning}")
         
-        # Build Material entry
         material = {
             "description": f"--- Material {mat_idx}: {base_formula} ---",
             "Mat_ID": f"M{mat_idx:03d}",
@@ -435,8 +521,8 @@ def _to_target_schema(data: dict, source_path: str, paper_text: Optional[str] = 
 
     return {
         "Dataset_Description": "High Entropy Alloy Data Extraction Template",
-        "schema_version": "2.1",
-        "pipeline_version": "knowmat-2.0.1",
+        "schema_version": "2.2",
+        "pipeline_version": "knowmat-2.1.0",
         "Materials": materials,
     }
 
@@ -656,7 +742,12 @@ def run(
             print(f"Continuing with non-standardized properties.\n")
 
     # Convert output to requested target schema
-    final_data = _to_target_schema(final_data, pdf_path, final_state.get("paper_text"))
+    final_data = _to_target_schema(
+        final_data,
+        pdf_path,
+        paper_text=final_state.get("paper_text"),
+        document_metadata=final_state.get("document_metadata"),
+    )
 
     # Write final extraction JSON
     output_path = os.path.join(paper_output_dir, f"{base_name}_extraction.json")

@@ -307,6 +307,32 @@ class CompositionProperties(BaseModel):
         description="Processing conditions applied to the material, or 'not provided'."
     )
 
+    processing_params: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Structured key process parameters extracted from the text. "
+            "Use standardised keys: "
+            "Laser_Power_W (float), Scan_Speed_mm_s (float), "
+            "Layer_Thickness_um (float), Hatch_Spacing_um (float), "
+            "Preheat_Temperature_C (float), Shielding_Gas (str, e.g. 'Ar'), "
+            "Oxygen_Content_ppm (float), Build_Orientation (str, e.g. 'Parallel-BD'). "
+            "Include ONLY parameters with explicit values in the paper. "
+            "Use null if no structured parameters can be extracted."
+        )
+    )
+
+    build_orientation: Optional[str] = Field(
+        default=None,
+        description=(
+            "Build/loading direction for this specific sample/condition entry. "
+            "Examples: 'Parallel-BD', 'Perpendicular-BD', 'X-Y plane', 'X-Z plane', "
+            "'Horizontal', 'Vertical', '45deg'. "
+            "CRITICAL: If the paper reports properties for the same composition in "
+            "different directions, create SEPARATE composition entries for each direction "
+            "and set this field accordingly. Use null if not applicable."
+        )
+    )
+
     process_category: Optional[str] = Field(
         default=None,
         description=(
@@ -320,11 +346,46 @@ class CompositionProperties(BaseModel):
             "Casting: Arc melting, melt spinning, casting."
         )
     )
+
+    xrd_details: Optional[str] = Field(
+        default=None,
+        description=(
+            "XRD instrument, scan parameters, and phase identification results. "
+            "Example: 'XRD (D8 Advance, Cu-Ka, 40kV/40mA, 20-100 deg, 1.5 deg/min); "
+            "single BCC phase identified; dislocation density 3.36e14 m-2'. "
+            "Do NOT mix microstructure morphology descriptions here."
+        )
+    )
+
+    microstructure_description: Optional[str] = Field(
+        default=None,
+        description=(
+            "Microstructure morphology from SEM/EBSD/TEM observations. "
+            "Include grain shape, size distribution, phase morphology, texture, "
+            "columnar vs equiaxed, precipitate distribution, etc. "
+            "Example: 'Equiaxed grains on XY plane (mean 200 um); columnar grains on "
+            "XZ plane; single BCC phase; no secondary phases observed'. "
+            "Do NOT include XRD instrument parameters here."
+        )
+    )
+
+    grain_size_text: Optional[str] = Field(
+        default=None,
+        description=(
+            "Original text describing grain size measurements, including method and "
+            "any direction-dependent values. Example: 'XY plane equiaxed ~200 um; "
+            "XZ plane columnar 10.4 um (vertical) / 6.72 um (horizontal), measured by "
+            "line intercept and area methods'."
+        )
+    )
     
     characterisation: Dict[str, str] = Field(
         default_factory=dict,
         description=(
-            "Characterisation techniques and their findings keyed by technique names."
+            "Characterisation techniques and their findings keyed by technique names. "
+            "Use structured keys: 'XRD', 'Microstructure', 'EBSD', 'TEM', 'SEM', 'APT', etc. "
+            "'XRD' should contain phase identification and instrument details. "
+            "'Microstructure' should contain grain morphology and distribution descriptions."
         )
     )
     properties_of_composition: List[Property] = Field(
