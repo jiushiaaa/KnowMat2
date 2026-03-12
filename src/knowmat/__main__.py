@@ -202,6 +202,13 @@ def main(argv: list[str] | None = None) -> None:
         md_path = paper_dir / f"{stem}.md"
         md_path.write_text(text, encoding="utf-8")
         print(f"Saved OCR markdown to: {md_path}")
+        ocr_items = result.get("ocr_items") if isinstance(result, dict) else None
+        if ocr_items is None:
+            ocr_items = []
+        json_path = paper_dir / f"{stem}.json"
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(ocr_items, f, ensure_ascii=False, indent=2)
+        print(f"Saved OCR structured output to: {json_path}")
         pages = result.get("metadata", {}).get("pages") if isinstance(result, dict) else None
         if pages is not None:
             print(f"[OCR] 完成; {pdf.name}: {pages} 页")
@@ -383,7 +390,6 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":  # pragma: no cover
     main()
-
 
 
 

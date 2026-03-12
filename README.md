@@ -97,7 +97,7 @@ data/processed/
 
 ### 前置要求
 
-1. **Python 3.11**（建议配合 Conda）
+1. **Python 3.11**
 2. **OpenAI 兼容 LLM API Key**（例如 ERNIE/Qianfan）
 3. **LangChain API Key**（可选，用于 LangSmith tracing）
 
@@ -110,12 +110,16 @@ git clone https://github.com/hasan-sayeed/KnowMat2.git
 cd KnowMat2
 ```
 
-2. **创建 Conda 环境**
+2. **创建 Python 虚拟环境（venv）**
 
 ```bash
-conda env create -f environment.yml
-conda activate KnowMat
+python3 -m venv .venv
+source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+python -m pip install -U pip
+pip install -r requirements.txt
 ```
+
+如果本机 `python3` 不是 3.11，请先安装 3.11 后再创建虚拟环境（例如使用 `pyenv` 或 `brew`），再执行上面的 `venv` 步骤。
 
 如 `paddleocr` 安装时提示缺少后端 wheel，请先为你的平台安装 `paddlepaddle` 后再重试。  
 如果要处理 PDF，建议预下载 PaddleOCR-VL 模型到项目目录：
@@ -123,6 +127,10 @@ conda activate KnowMat
 ```bash
 python scripts/download_paddleocrvl_models.py --model-dir models/paddleocrvl1_5
 ```
+
+### Apple Silicon（Mac M 系列）PaddleOCR-VL 推理配置
+
+推荐直接使用文末的 **一键脚本**（见 “PaddleOCR‑VL GPU / Apple Silicon” 部分）。如需手动安装，可参考官方文档建议：使用 `venv` 并安装 `paddlepaddle` 3.2.1+ 与 `paddleocr[doc-parser]`。
 
 3. **配置 API Key**
 
@@ -761,9 +769,13 @@ Unrecognized function call PatchFunction
 - GitHub Issues：<https://github.com/hasan-sayeed/KnowMat2/issues>
 - Email：hasan.sayeed@utah.edu
 
-## PaddleOCR-VL GPU (Windows / RTX 50-series)
+## PaddleOCR-VL GPU / Apple Silicon
 
-For Windows users with RTX 50-series (Blackwell), use the GPU setup script:
+根据不同环境选择对应方案：
+
+### Windows + RTX 50-series (Blackwell)
+
+Use the GPU setup script:
 
 ```powershell
 .\scripts\setup_paddleocrvl_gpu.ps1
@@ -774,3 +786,39 @@ This installs the GPU PaddlePaddle build and PaddleOCR-VL dependencies, sets GPU
 Notes:
 - The script sets `KNOWMAT_OCR_DEVICE=gpu:0` and `PADDLE_PDX_CACHE_HOME=models/paddleocrvl1_5`.
 - Server backends like vLLM/sglang are for dedicated serving environments; on Windows, use native Paddle GPU inference.
+
+### macOS + Apple Silicon (CPU)
+
+一键脚本（默认 CPU 推理，安装到主环境 `.venv`）：
+
+```bash
+./scripts/setup_paddleocrvl_macos.sh
+```
+
+该脚本会使用主环境 `.venv`，安装 `paddlepaddle==3.2.1` 与 `paddleocr[doc-parser]`，并下载模型到 `models/paddleocrvl1_5`。
+
+如需显式指定运行设备与缓存目录，可在 `.env` 或终端设置：
+
+```bash
+export KNOWMAT_OCR_DEVICE=cpu
+export PADDLE_PDX_CACHE_HOME=models/paddleocrvl1_5
+```
+
+### macOS + Apple Silicon (MLX‑VLM 加速)
+
+For Mac M‑series local acceleration, the official guide recommends MLX‑VLM (`>=0.3.11`) and running a local server, then pointing PaddleOCR‑VL to that backend.
+
+```bash
+INSTALL_MLX=1 ./scripts/setup_paddleocrvl_macos.sh
+mlx_vlm.server --port 8111
+```
+
+CLI example:
+
+```bash
+paddleocr doc_parser \
+  --input paddleocr_vl_demo.png \
+  --vl_rec_backend mlx-vlm-server \
+  --vl_rec_server_url http://localhost:8111/ \
+  --vl_rec_api_model_name PaddlePaddle/PaddleOCR-VL-1.5
+```

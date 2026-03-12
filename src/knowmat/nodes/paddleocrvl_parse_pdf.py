@@ -156,6 +156,116 @@ def _convert_html_to_markdown(text: str) -> str:
     converted = re.sub(r"\n{3,}", "\n\n", converted)
     return converted.strip()
 
+
+def _html_table_to_structured(html: str) -> Optional[Dict[str, Any]]:
+    """Parse a <table> HTML string into a structured columns/rows dict."""
+    if "<table" not in html.lower():
+        return None
+    try:
+        from bs4 import BeautifulSoup  # type: ignore
+    except Exception:
+        return None
+
+    soup = BeautifulSoup(html, "html.parser")
+    table = soup.find("table")
+    if table is None:
+        return None
+
+    # Extract header cells if present
+    headers: List[str] = []
+    thead = table.find("thead")
+    if thead:
+        header_cells = thead.find_all(["th", "td"])
+        headers = [cell.get_text(" ", strip=True) for cell in header_cells if cell]
+
+    # Fallback: use first row as header if it contains <th>
+    if not headers:
+        first_row = table.find("tr")
+        if first_row:
+            header_cells = first_row.find_all("th")
+            if header_cells:
+                headers = [cell.get_text(" ", strip=True) for cell in header_cells]
+
+    rows: List[List[str]] = []
+    for tr in table.find_all("tr"):
+        cells = tr.find_all(["td", "th"])
+        if not cells:
+            continue
+        row = [cell.get_text(" ", strip=True) for cell in cells]
+        rows.append(row)
+
+    if headers and rows and rows[0] == headers:
+        rows = rows[1:]
+
+    if not headers and rows:
+        max_len = max(len(r) for r in rows)
+        headers = [f"col_{i+1}" for i in range(max_len)]
+
+    if not headers:
+        return None
+
+    normalized_rows: List[Dict[str, str]] = []
+    for row in rows:
+        padded = row + [""] * (len(headers) - len(row))
+        normalized_rows.append({headers[i]: padded[i] for i in range(len(headers))})
+
+    return {
+        "columns": [{"name": name, "type": "string"} for name in headers],
+        "rows": normalized_rows,
+    }
+
+
+def _get_block_attr(block: Any, name: str, default: Any = None) -> Any:
+    if hasattr(block, name):
+        return getattr(block, name)
+    if isinstance(block, dict):
+        return block.get(name, default)
+    return default
+
+
+def _block_to_item(block: Any) -> Optional[Dict[str, Any]]:
+    label = _get_block_attr(block, "label", None) or _get_block_attr(block, "block_label", None)
+    content = _get_block_attr(block, "content", "") or _get_block_attr(block, "text", "")
+    confidence = _get_block_attr(block, "score", None) or _get_block_attr(block, "confidence", None)
+
+    if isinstance(content, str):
+        content = content.strip()
+
+    if label in ("table", "chart"):
+        structured = _html_table_to_structured(content or "")
+        item: Dict[str, Any] = {"typer": "table"}
+        if structured:
+            item.update(structured)
+        else:
+            item["text"] = _convert_html_to_markdown(content or "")
+        if confidence is not None:
+            item["confidence"] = confidence
+        return item
+
+    if label in ("image", "figure", "seal"):
+        image_info = _get_block_attr(block, "image", None)
+        image_path = image_info.get("path") if isinstance(image_info, dict) else None
+        data: Dict[str, Any] = {"image_path": image_path}
+        if content:
+            data["caption"] = content
+        if confidence is not None:
+            data["confidence"] = confidence
+        return {"typer": "image", "data": data}
+
+    if content:
+        item = {"typer": "paragraph", "text": _convert_html_to_markdown(content)}
+        if confidence is not None:
+            item["confidence"] = confidence
+        return item
+    return None
+
+
+def _text_to_paragraph_items(text: str) -> List[Dict[str, Any]]:
+    if not text:
+        return []
+    blocks = [b.strip() for b in text.split("\n\n") if b.strip()]
+    return [{"typer": "paragraph", "text": block} for block in blocks]
+
 # ---------------------------------------------------------------------------
 # Section heading normalisation & noise filtering
 # ---------------------------------------------------------------------------
@@ -451,8 +561,8 @@ def _extract_doi_from_pdf_metadata(pdf_path: str) -> Optional[str]:
     return None
 
 
-def _extract_pdf_with_paddleocrvl(pdf_path: str, output_dir: str, model_dir: Path, save_intermediate: bool = True) -> Tuple[str, Dict[str, Any]]:
-    """Render PDF pages, run OCR, and return merged text with metadata.
+def _extract_pdf_with_paddleocrvl(pdf_path: str, output_dir: str, model_dir: Path, save_intermediate: bool = True) -> Tuple[str, Dict[str, Any], List[Dict[str, Any]]]:
+    """Render PDF pages, run OCR, and return merged text + metadata + structured items.
 
     Also extracts DOI from the first page text and PDF-level metadata.
     The DOI is returned in ``metadata["doi"]``.
@@ -484,9 +594,11 @@ def _extract_pdf_with_paddleocrvl(pdf_path: str, output_dir: str, model_dir: Pat
 
     page_blocks: List[str] = []
     page_level_meta: List[Dict[str, Any]] = []
+    ocr_items: List[Dict[str, Any]] = []
     first_page_full_text = ""
     doc = fitz.open(str(pdf))
     try:
+        vl_results: List[Any] = []
         for page_idx, page in enumerate(doc, start=1):
             image_path = image_dir / f"{pdf.stem}-page-{page_idx:04d}.png"
             page.get_pixmap(dpi=300, alpha=False).save(str(image_path))
@@ -496,41 +608,95 @@ def _extract_pdf_with_paddleocrvl(pdf_path: str, output_dir: str, model_dir: Pat
                 with open(raw_dir / f"page-{page_idx:04d}.json", "w", encoding="utf-8") as f:
                     json.dump(raw, f, ensure_ascii=False, indent=2, default=str)
 
-            lines: List[str] = []
-            _collect_text(raw, lines)
-            lines = _normalize_lines(lines)
+            if backend == "paddleocrvl":
+                if isinstance(raw, list):
+                    vl_results.extend(raw)
+                else:
+                    vl_results.append(raw)
+            else:
+                lines: List[str] = []
+                _collect_text(raw, lines)
+                lines = _normalize_lines(lines)
 
-            if not lines:
-                fallback = page.get_text("text")
-                lines = [x.strip() for x in fallback.splitlines() if x.strip()]
+                if not lines:
+                    fallback = page.get_text("text")
+                    lines = [x.strip() for x in fallback.splitlines() if x.strip()]
 
-            page_text = "\n".join(lines).strip()
-            page_text = _convert_html_to_markdown(page_text)
-            page_blocks.append(f"## Page {page_idx}\n\n{page_text}")
+                page_text = "\n".join(lines).strip()
+                page_text = _convert_html_to_markdown(page_text)
+                page_blocks.append(f"## Page {page_idx}\n\n{page_text}")
 
-            # Collect per-page debug metadata (header/footer/preview)
-            page_level_meta.append({
-                "page": page_idx,
-                "header_text": "\n".join(lines[:_HEADER_LINES]),
-                "footer_text": "\n".join(lines[-_FOOTER_LINES:]) if len(lines) >= _FOOTER_LINES else "",
-                "line_count": len(lines),
-            })
+                # Collect per-page debug metadata (header/footer/preview)
+                page_level_meta.append({
+                    "page": page_idx,
+                    "header_text": "\n".join(lines[:_HEADER_LINES]),
+                    "footer_text": "\n".join(lines[-_FOOTER_LINES:]) if len(lines) >= _FOOTER_LINES else "",
+                    "line_count": len(lines),
+                })
 
             # Capture full first-page text (OCR + PyMuPDF) for DOI search
             if page_idx == 1:
                 pymupdf_text = page.get_text("text") or ""
-                first_page_full_text = page_text + "\n" + pymupdf_text
+                if backend == "paddleocrvl":
+                    first_page_full_text = pymupdf_text
+                else:
+                    first_page_full_text = page_text + "\n" + pymupdf_text
     finally:
         doc.close()
         if temp_dir is not None:
             temp_dir.cleanup()
 
-    # --- DOI extraction: PDF metadata â†?first page OCR+text â†?whole doc ---
+    if backend == "paddleocrvl" and vl_results:
+        try:
+            restructured = engine.restructure_pages(
+                vl_results,
+                merge_tables=True,
+                relevel_titles=True,
+                concatenate_pages=False,
+            )
+            restructured = list(restructured)
+        except Exception:
+            restructured = []
+
+        for idx, res in enumerate(restructured, start=1):
+            try:
+                md_info = res._to_markdown(pretty=True, show_formula_number=False)
+                page_text = md_info.get("markdown_texts", "")
+            except Exception:
+                page_text = ""
+            page_text = _convert_html_to_markdown(page_text)
+            if page_text:
+                page_blocks.append(page_text)
+
+            lines = [l for l in page_text.splitlines() if l.strip()]
+            page_level_meta.append({
+                "page": idx,
+                "header_text": "\n".join(lines[:_HEADER_LINES]),
+                "footer_text": "\n".join(lines[-_FOOTER_LINES:]) if len(lines) >= _FOOTER_LINES else "",
+                "line_count": len(lines),
+            })
+
+            try:
+                blocks = res["parsing_res_list"]
+            except Exception:
+                blocks = getattr(res, "parsing_res_list", [])
+            for block in blocks or []:
+                item = _block_to_item(block)
+                if item:
+                    item["page"] = idx
+                    ocr_items.append(item)
+
+    merged = "\n\n".join(page_blocks).strip()
+
+    # If we couldn't build structured items, fall back to paragraph chunks
+    if not ocr_items and merged:
+        ocr_items = _text_to_paragraph_items(merged)
+
+    # --- DOI extraction: PDF metadata -> first page OCR+text -> whole doc ---
     doi = _extract_doi_from_pdf_metadata(str(pdf))
     if not doi:
         doi = _extract_doi_from_text(first_page_full_text)
 
-    merged = "\n\n".join(page_blocks).strip()
     metadata = {
         "backend": backend,
         "model_dir": str(model_dir),
@@ -539,9 +705,9 @@ def _extract_pdf_with_paddleocrvl(pdf_path: str, output_dir: str, model_dir: Pat
         "ocr_raw_dir": str(raw_dir) if raw_dir is not None else None,
         "doi": doi,
         "page_level_metadata": page_level_meta,
+        "ocr_items": len(ocr_items),
     }
-    return merged, metadata
-
+    return merged, metadata, ocr_items
 
 def _read_txt_file(path: Path) -> str:
     """Read plain text file with robust fallback encoding handling."""
@@ -604,7 +770,7 @@ def parse_pdf_with_paddleocrvl(state: KnowMatState) -> dict:
                 json.dump(doc_meta, f, ensure_ascii=False, indent=2)
             print(f"Saved parser metadata to: {meta_path}")
 
-        return {"paper_text": cleaned_text, "document_metadata": doc_meta}
+        return {"paper_text": cleaned_text, "document_metadata": doc_meta, "ocr_items": _text_to_paragraph_items(cleaned_text)}
 
     if suffix != ".pdf" and suffix not in (".txt", ".md"):
         raise ValueError(f"Unsupported file type: {source_path.suffix}. Only .pdf, .txt, and .md are supported.")
@@ -614,7 +780,7 @@ def parse_pdf_with_paddleocrvl(state: KnowMatState) -> dict:
     model_dir = _default_model_dir()
 
     try:
-        extracted_text, metadata = _extract_pdf_with_paddleocrvl(
+        extracted_text, metadata, ocr_items = _extract_pdf_with_paddleocrvl(
             str(source_path),
             str(parse_output_dir),
             model_dir,
@@ -649,7 +815,7 @@ def parse_pdf_with_paddleocrvl(state: KnowMatState) -> dict:
                 json.dump(metadata, f, ensure_ascii=False, indent=2)
             print(f"Saved parser metadata to: {meta_path}")
 
-        return {"paper_text": cleaned_text, "document_metadata": doc_meta}
+        return {"paper_text": cleaned_text, "document_metadata": doc_meta, "ocr_items": _text_to_paragraph_items(cleaned_text)}
     except Exception as exc:
         raise RuntimeError(f"Failed to parse PDF with PaddleOCR-VL: {str(exc)}") from exc
 
