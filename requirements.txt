@@ -1,10 +1,6 @@
-# KnowMat 依赖（与 environment.yml 中 pip 部分一致）
+# KnowMat 基础依赖（与 environment.yml 中 pip 部分一致，CPU 版 Paddle，跨平台）
 # 仅用 pip 安装时：pip install -r requirements.txt
-#
-# Paddle 默认使用 GPU（cu129），建议单独执行以指定国内源：
-#   python -m pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
-#   python -m pip install "paddleocr[all]"
-# cuDNN 9（GPU OCR 必需，否则报 cudnn64_9.dll error 126）：conda install nvidia::cudnn cuda-version=12
+# 需要 GPU：见 requirements-gpu.txt 与 docs/platforms.md
 
 # 项目本体（可编辑安装）
 -e .
@@ -19,8 +15,8 @@ trustcall==0.0.39
 # OpenAI / API
 openai==1.93.2
 
-# PaddleOCR-VL（PDF 解析，默认 GPU cu129）
-paddlepaddle-gpu==3.3.0
+# PaddleOCR-VL（PDF 解析，CPU 版；GPU 用 requirements-gpu.txt）
+paddlepaddle>=3.0.0
 paddleocr[all]
 pymupdf==1.24.13
 

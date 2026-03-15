@@ -1,6 +1,6 @@
-# KnowMat 一键部署：创建/更新 Conda 环境 + Paddle GPU (cu129) + cuDNN + OCR 模型
-# 用法：在项目根目录执行 .\scripts\setup_env.ps1  或  .\scripts\setup_env.ps1 -CPU
-# -CPU：仅安装 CPU 版 Paddle，不装 paddlepaddle-gpu / cuDNN
+# KnowMat 一键部署 (Windows)：Conda 环境 + Paddle GPU (cu129，兼容 CUDA 12.x 含 12.7) + cuDNN + OCR 模型
+# 用法：.\scripts\setup_env.ps1  或  .\scripts\setup_env.ps1 -CPU
+# -CPU：仅安装 CPU 版 Paddle。多平台说明见 docs/platforms.md
 
 param(
     [switch]$CPU = $false,
@@ -43,12 +43,12 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 3. 在 KnowMat 环境中安装 Paddle + PaddleOCR（使用国内源）
+# 3. GPU 可选：覆盖为 GPU 版 Paddle + PaddleOCR（environment.yml 已装 CPU 版，此处按需升级）
 Write-Host ""
-Write-Host "==> 在环境中安装 PaddlePaddle + PaddleOCR (cu129 源)" -ForegroundColor Yellow
 if ($CPU) {
-    & conda run -n $EnvName python -m pip install "paddlepaddle>=3.0.0" "paddleocr[all]" --quiet
+    Write-Host "==> 保持 CPU 版 Paddle（已由 environment.yml 安装）" -ForegroundColor Gray
 } else {
+    Write-Host "==> 安装 GPU 版 Paddle + PaddleOCR (cu129 源，兼容 CUDA 12.x)" -ForegroundColor Yellow
     & conda run -n $EnvName python -m pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/ --quiet
     & conda run -n $EnvName python -m pip install "paddleocr[all]" --quiet
 }

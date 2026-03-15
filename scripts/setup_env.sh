@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# KnowMat 一键部署：创建/更新 Conda 环境 + Paddle GPU (cu129) + cuDNN + OCR 模型
-# 用法：在项目根目录执行 ./scripts/setup_env.sh  或  ./scripts/setup_env.sh --cpu
-# --cpu：仅安装 CPU 版 Paddle，不装 paddlepaddle-gpu / cuDNN
+# KnowMat 一键部署：创建/更新 Conda 环境 + Paddle（Linux/Windows 可选 GPU cu129）+ cuDNN + OCR 模型
+# 用法：./scripts/setup_env.sh [--cpu] [--skip-cudnn]
+# --cpu：强制 CPU 版 Paddle（macOS 下自动使用 CPU）
+# macOS（含 Apple Silicon）无 NVIDIA GPU，脚本会自动按 CPU 安装；Linux/Windows 默认 GPU（cu129）
 
 set -e
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -17,8 +18,18 @@ for arg in "$@"; do
   esac
 done
 
+# macOS 无 NVIDIA GPU，强制 CPU
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  if ! $CPU; then
+    echo "==> 检测到 macOS，使用 CPU 版 Paddle（无 NVIDIA GPU）"
+    CPU=true
+  fi
+fi
+
 echo "==> KnowMat 一键部署 (bash)"
 echo "    项目根目录: $REPO_ROOT"
+echo "    平台: $(uname -s)"
+echo "    Paddle: $([ "$CPU" = true ] && echo 'CPU' || echo 'GPU (cu129)')"
 echo ""
 
 # 1. 检查 conda
@@ -42,12 +53,12 @@ else
   conda env create -f "$YML" -n "$ENV_NAME"
 fi
 
-# 3. 在环境中安装 Paddle + PaddleOCR
+# 3. GPU 可选：覆盖为 GPU 版 Paddle + PaddleOCR（yml 已装 CPU 版，此处按需升级）
 echo ""
-echo "==> 在环境中安装 PaddlePaddle + PaddleOCR (cu129 源)"
 if $CPU; then
-  conda run -n "$ENV_NAME" python -m pip install "paddlepaddle>=3.0.0" "paddleocr[all]" -q
+  echo "==> 保持 CPU 版 Paddle（已由 environment.yml 安装）"
 else
+  echo "==> 安装 GPU 版 Paddle + PaddleOCR (cu129 源)"
   conda run -n "$ENV_NAME" python -m pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/ -q
   conda run -n "$ENV_NAME" python -m pip install "paddleocr[all]" -q
 fi
@@ -59,7 +70,7 @@ if ! $CPU && ! $SKIP_CUDNN; then
   conda install -n "$ENV_NAME" nvidia::cudnn cuda-version=12 -y -q 2>/dev/null || true
 fi
 
-# 5. 下载 PaddleOCR-VL 模型
+# 5. 下载 PaddleOCR-VL 模型（路径兼容 Linux/macOS）
 MODEL_DIR="$REPO_ROOT/models/paddleocrvl1_5"
 echo ""
 echo "==> 下载 PaddleOCR-VL 模型到 $MODEL_DIR"

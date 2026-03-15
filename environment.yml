@@ -47,11 +47,8 @@ dependencies:
       # OpenAI / API
       - openai==1.93.2
 
-      # PaddleOCR-VL（PDF 解析，默认 GPU cu129；需 cuDNN 9，否则报 cudnn64_9.dll）
-      # 推荐单独安装以指定国内源：python -m pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
-      # 然后：python -m pip install "paddleocr[all]"
-      # cuDNN 9（GPU OCR 必需）：conda install nvidia::cudnn cuda-version=12。详见 docs/ocr-cudnn64_9-fix.md
-      - paddlepaddle-gpu==3.3.0
+      # PaddleOCR-VL（PDF 解析）：此处为 CPU 版，跨平台通用。需 GPU 时由脚本或 requirements-gpu.txt 单独安装。
+      - paddlepaddle>=3.0.0
       - paddleocr[all]
       - pymupdf==1.24.13
 
@@ -75,9 +72,8 @@ dependencies:
       - torch==2.8.0
       - torchvision==0.23.0
 
-# 默认 GPU（CUDA 12.9）。若 conda 创建时 paddlepaddle-gpu 安装失败，请激活环境后执行：
-#   python -m pip install paddlepaddle-gpu==3.3.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
-#   python -m pip install "paddleocr[all]"
-# cuDNN 9（GPU OCR 必需，否则报 cudnn64_9.dll error 126）：
-#   conda install nvidia::cudnn cuda-version=12
-# 使用 CPU OCR：设置环境变量 KNOWMAT_OCR_DEVICE=cpu。详见 docs/ocr-cudnn64_9-fix.md
+# GPU 与 KnowMat 已分开：本 yml 仅含 CPU 版 Paddle，Mac/Linux/Windows 均可直接 conda env create。
+# 需要 GPU（Windows/Linux + NVIDIA）时，二选一：
+#   1) 一键脚本（推荐）：Windows 运行 .\scripts\setup_env.ps1；Linux/Mac 运行 ./scripts/setup_env.sh（Mac 自动用 CPU）
+#   2) 手动：pip install -r requirements-gpu.txt -i https://www.paddlepaddle.org.cn/packages/stable/cu129/
+#      然后 conda install nvidia::cudnn cuda-version=12。详见 docs/ocr-cudnn64_9-fix.md、docs/platforms.md
