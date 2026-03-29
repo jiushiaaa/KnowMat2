@@ -15,7 +15,12 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from knowmat.pdf.blocks import block_to_item, sanitize_ocr_items_vl_artifacts, text_to_paragraph_items
+from knowmat.pdf.blocks import (
+    block_to_item,
+    classify_ocr_item_roles,
+    sanitize_ocr_items_vl_artifacts,
+    text_to_paragraph_items,
+)
 from knowmat.pdf.block_filter import filter_figure_internal_fragments
 from knowmat.pdf.doi_extractor import (
     extract_doi_from_pdf_metadata,
@@ -53,6 +58,7 @@ from knowmat.pdf.section_normalizer import (
     normalize_alloy_strings,
     normalize_leading_masthead_and_title,
     normalize_plain_author_superscripts,
+    rejoin_broken_paragraphs,
     repair_keywords_abstract_two_column_ocr,
     strip_references_section,
     structure_sections,
@@ -98,6 +104,11 @@ def _append_missing_ocr_paragraphs_enabled() -> bool:
     return v not in ("0", "false", "no", "off")
 
 
+def _normalize_for_hint_dedup(s: str) -> str:
+    """Collapse whitespace and lower-case *s* for deduplication comparisons."""
+    return re.sub(r"\s+", " ", s).lower().strip()
+
+
 def _append_missing_paragraph_hints(
     body: str,
     items: Optional[List[Dict[str, Any]]],
@@ -105,26 +116,32 @@ def _append_missing_paragraph_hints(
     max_chars: int = 4000,
     max_line_len: int = 500,
 ) -> str:
-    """Append short paragraph texts from OCR items that are absent from *body* (substring check).
+    """Append short paragraph texts from OCR items that are absent from *body*.
 
-    Covers masthead/DOI lines dropped by markdown export without duplicating tables/formulas.
+    Uses whitespace-normalised comparison to avoid re-appending the same content
+    when minor spacing / hyphenation differences exist between the OCR item text
+    and the merged body.  Layout-noise items (headers, footers) are always skipped.
     """
     if not items or not body:
         return body
+    body_norm = _normalize_for_hint_dedup(body)
     extras: List[str] = []
     total = 0
-    seen: set[str] = set()
+    seen_norm: set[str] = set()
     for it in items:
         if not isinstance(it, dict) or it.get("typer") != "paragraph":
+            continue
+        if it.get("is_layout_noise"):
             continue
         t = (it.get("text") or "").strip()
         if len(t) < 6 or len(t) > max_line_len:
             continue
-        if t in seen:
+        t_norm = _normalize_for_hint_dedup(t)
+        if t_norm in seen_norm:
             continue
-        if t in body:
+        if t_norm in body_norm:
             continue
-        seen.add(t)
+        seen_norm.add(t_norm)
         extras.append(t)
         total += len(t) + 2
         if total >= max_chars:
@@ -514,15 +531,31 @@ def _extract_pdf_with_paddleocrvl(
                             else getattr(block, "block_bbox", None)
                         )
                         is_noise = blabel in _LAYOUT_NOISE_LABELS
-                        
-                        # Filter out general layout noise based on bbox position for header/footer
-                        if bbox is not None and len(bbox) == 4:
-                            _, y0, _, y1 = bbox
-                            # Use typical PDF dimensions (e.g. 842 points height) as heuristic if needed
-                            # but simple fractional check works if we assume 1.0 is max
-                            # Since we don't have page height here, we rely primarily on blabel
-                            pass
-                            
+
+                        # Secondary bbox-based header/footer check: if the block label is not
+                        # already a known noise label, check whether its y-position sits in the
+                        # top _HEADER_Y_FRAC or bottom (1 - _FOOTER_Y_FRAC) fraction of all
+                        # blocks on this page.  We use the normalised coordinate range inferred
+                        # from the largest y1 value seen on this page as a proxy for page height.
+                        if not is_noise and bbox is not None and len(bbox) == 4:
+                            _, by0, _, by1 = bbox
+                            # Collect max y1 across all blocks on the current page to estimate
+                            # the page height in OCR coordinates.
+                            page_y_max = max(
+                                (
+                                    (b.get("block_bbox") or getattr(b, "block_bbox", None) or [0, 0, 0, 0])[3]
+                                    for b in (blocks or [])
+                                    if (b.get("block_bbox") or getattr(b, "block_bbox", None))
+                                    and len(b.get("block_bbox") or getattr(b, "block_bbox", None)) == 4
+                                ),
+                                default=0.0,
+                            )
+                            if page_y_max > 0:
+                                y0_frac = by0 / page_y_max
+                                y1_frac = by1 / page_y_max
+                                if y1_frac <= _HEADER_Y_FRAC or y0_frac >= _FOOTER_Y_FRAC:
+                                    is_noise = True
+
                         item = block_to_item(block)
                         if item:
                             item["page"] = pdf_page
@@ -544,9 +577,16 @@ def _extract_pdf_with_paddleocrvl(
 
         if ocr_items:
             try:
-                ocr_items, n_removed = filter_figure_internal_fragments(ocr_items)
-                if n_removed:
-                    logger.info("Removed %d figure-internal fragment(s) from %s", n_removed, pdf)
+                ocr_items, removed_fig_items = filter_figure_internal_fragments(ocr_items)
+                if removed_fig_items:
+                    logger.info("Removed %d figure-internal fragment(s) from %s", len(removed_fig_items), pdf)
+                    # Also strip the same text snippets from the merged string so that
+                    # figure-internal axis labels / tick marks don't end up in paper_text.
+                    for _item in removed_fig_items:
+                        _t = (_item.get("text") or "").strip()
+                        if len(_t) >= 6 and _t in merged:
+                            merged = merged.replace(_t + "\n", "\n").replace(_t, "")
+                    merged = re.sub(r"\n{3,}", "\n\n", merged).strip()
             except Exception as exc:
                 logger.warning("filter_figure_internal_fragments failed: %s", exc, exc_info=True)
 
@@ -559,10 +599,22 @@ def _extract_pdf_with_paddleocrvl(
             "ppstructure_detail": "",
             "ppstructure_replacements": 0,
         }
-        if ocr_items:
+        skip_pp_refine = _env_truthy("KNOWMAT_SKIP_PPSTRUCTURE_REFINE")
+        if ocr_items and skip_pp_refine:
+            pp_report = {
+                "ppstructure_status": "skipped_env",
+                "ppstructure_detail": "KNOWMAT_SKIP_PPSTRUCTURE_REFINE",
+                "ppstructure_replacements": 0,
+            }
+            logger.info(
+                "PP-StructureV3 table/formula refinement skipped (KNOWMAT_SKIP_PPSTRUCTURE_REFINE)."
+            )
+        elif ocr_items:
             logger.info("Starting PP-StructureV3 refinement for tables and formulas...")
             page_images_map: Dict[int, Path] = dict(zip(selected_pages, image_paths))
             reocr_work_dir = out_dir if save_intermediate else Path(image_dir)
+            # VL pass leaves a large resident footprint; free cache before Structure peaks VRAM.
+            try_release_paddle_gpu_memory()
             try:
                 ocr_items, pp_report = route_and_reocr(
                     ocr_items,
@@ -670,6 +722,24 @@ def _read_txt_file(path: Path) -> str:
         return path.read_text(encoding="utf-8", errors="ignore")
 
 
+def _clean_ocr_item_texts(items: List[Dict[str, Any]]) -> None:
+    """Apply per-item text normalization to paragraph blocks in *items* in-place.
+
+    Runs :func:`normalize_alloy_strings` and :func:`format_formula_text` on each
+    paragraph's text field so that the JSON output shares the same alloy/formula
+    rendering as ``paper_text``, without requiring the full document-level pipeline.
+    """
+    for it in items:
+        if not isinstance(it, dict) or it.get("typer") != "paragraph":
+            continue
+        t = (it.get("text") or "").strip()
+        if not t:
+            continue
+        t = normalize_alloy_strings(t)
+        t = format_formula_text(t)
+        it["text"] = t
+
+
 def _finalize_pdf_parse(
     source_path: Path,
     parse_output_dir: Path,
@@ -680,9 +750,12 @@ def _finalize_pdf_parse(
 ) -> Dict[str, Any]:
     if _ocr_items:
         sanitize_ocr_items_vl_artifacts(_ocr_items)
+        _clean_ocr_item_texts(_ocr_items)
+        classify_ocr_item_roles(_ocr_items)
 
     structured_text = normalize_leading_masthead_and_title(extracted_text)
     structured_text = structure_sections(structured_text)
+    structured_text = rejoin_broken_paragraphs(structured_text)
     structured_text = repair_keywords_abstract_two_column_ocr(structured_text)
     structured_text = normalize_plain_author_superscripts(structured_text)
     structured_text = normalize_alloy_strings(structured_text)
@@ -693,6 +766,8 @@ def _finalize_pdf_parse(
         else structured_text
     )
     # Prefer DOI from full OCR block list: merged markdown can omit lines still on parsing_res_list.
+    # Same scan as paragraph ``role=="doi"`` tagging (see :func:`classify_ocr_item_roles`): both use
+    # :func:`extract_first_doi` on paragraph text, so the value prefixed to MD matches JSON DOI blocks.
     resolved_doi = extract_first_doi_from_ocr_items(_ocr_items) or metadata.get("doi")
     if resolved_doi and resolved_doi not in cleaned_text:
         cleaned_text = f"DOI: {resolved_doi}\n\n{cleaned_text}"
@@ -836,8 +911,7 @@ def parse_pdf_with_paddleocrvl(state: KnowMatState) -> dict:
     if render_dpi < 72 or render_dpi > 600:
         render_dpi = 300
     vl_version = os.getenv("PADDLEOCRVL_VERSION", "1.5").strip() or "1.5"
-    # PP-StructureV3 精修始终参与；缓存键固定为完整 VL+Structure 管线
-    skip_pp = False
+    skip_pp = _env_truthy("KNOWMAT_SKIP_PPSTRUCTURE_REFINE")
     skip_chem = _env_truthy("KNOWMAT_SKIP_CHEM_REOCR")
     pages_key = pages_key_for_cache(selected_pages, total_pages)
     digest = md5_file_digest(source_path)

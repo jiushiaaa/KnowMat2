@@ -23,7 +23,7 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from knowmat.pdf.ocr_engine import ensure_paddle_device_from_env
+from knowmat.pdf.ocr_engine import ensure_paddle_device_from_env, try_release_paddle_gpu_memory
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +268,13 @@ def _run_ppstructurev3_page_regions(
     try:
         output = pipeline.predict(input=str(image_path))
     except Exception as exc:
+        msg = str(exc).lower()
         logger.warning("PP-StructureV3 predict failed for %s: %s", image_path, exc)
+        if "out of memory" in msg or "memoryallocation" in msg or "cudaerror" in msg:
+            logger.info(
+                "PP-StructureV3 GPU OOM mitigation: set KNOWMAT_SKIP_PPSTRUCTURE_REFINE=1 to "
+                "skip table/formula refinement, or lower OCR_RENDER_DPI / close other GPU apps."
+            )
         return []
 
     res0 = None
@@ -317,7 +323,9 @@ def seed_legacy_complex_items_from_ppstructurev3(
         p = Path(img_path)
         if not p.is_file():
             continue
-        for reg in _run_ppstructurev3_page_regions(pipeline, p):
+        regions = _run_ppstructurev3_page_regions(pipeline, p)
+        try_release_paddle_gpu_memory()
+        for reg in regions:
             blk = reg.get("block")
             if not isinstance(blk, dict):
                 continue
@@ -383,6 +391,8 @@ def route_and_reocr(
 
     from .blocks import block_to_item
 
+    try_release_paddle_gpu_memory()
+
     replacements = 0
     for page_idx, item_indices in pages_with_complex.items():
         page_img = page_images.get(page_idx)
@@ -390,6 +400,8 @@ def route_and_reocr(
             continue
 
         regions = _run_ppstructurev3_page_regions(pipeline, page_img)
+        # VL + Structure often peaks VRAM; free cache between pages to reduce OOM streaks.
+        try_release_paddle_gpu_memory()
         if not regions:
             continue
 

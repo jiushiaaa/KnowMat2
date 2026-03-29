@@ -20,6 +20,7 @@ Inputs from Stage 1:
 """
 
 import json
+import os
 from typing import Dict, Any
 
 from knowmat.extractors import manager_extractor, ManagerFeedback, CompositionList
@@ -30,12 +31,18 @@ _VALIDATOR_TEMPLATES = load_yaml_templates_required(
     "validator.yaml",
     (
         "system",
+        "paper_text_prefix",
+        "paper_text_suffix",
         "stage1_notes_prefix",
         "aggregated_data_prefix",
         "evaluation_feedback_header",
         "validation_tail",
     ),
 )
+
+# Truncate paper_text passed to validator to keep token usage bounded.
+# Can be overridden via KNOWMAT_VALIDATOR_PAPER_TEXT_CHARS env var.
+_VALIDATOR_PAPER_TEXT_CHARS = int(os.getenv("KNOWMAT_VALIDATOR_PAPER_TEXT_CHARS", "4000"))
 
 
 def validate_and_correct(state: KnowMatState) -> Dict[str, Any]:
@@ -201,6 +208,14 @@ def _build_validation_prompt(aggregated_data, aggregation_notes, run_results, pa
     t = _VALIDATOR_TEMPLATES
     parts = []
     parts.append(t.get("system", "").strip() + "\n\n")
+
+    # Inject paper_text excerpt so the validator can cross-reference numeric values.
+    paper_text_excerpt = (paper_text or "")[:_VALIDATOR_PAPER_TEXT_CHARS].strip()
+    if paper_text_excerpt:
+        parts.append(t.get("paper_text_prefix", "ORIGINAL PAPER TEXT (excerpt):\n"))
+        parts.append(paper_text_excerpt + "\n")
+        parts.append(t.get("paper_text_suffix", "────────────────────────────────────────────────────────────────────────────────\n") + "\n\n")
+
     parts.append(t.get("stage1_notes_prefix", "STAGE 1 AGGREGATION NOTES:\n"))
     parts.append(f"{aggregation_notes}\n\n")
 

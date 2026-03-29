@@ -432,8 +432,8 @@ def get_gpu_memory_info() -> Tuple[float, float]:
 def check_gpu_memory_and_downgrade(threshold_gb: float = 1.5) -> bool:
     """If GPU free memory is low, reduce OCR batch size and try to free cache.
 
-    KnowMat keeps PP-StructureV3 / chemical re-OCR enabled by default; this helper
-    does not set ``KNOWMAT_SKIP_PPSTRUCTURE_REFINE`` (legacy behavior removed).
+    KnowMat keeps PP-StructureV3 / chemical re-OCR enabled by default.  Users can set
+    ``KNOWMAT_SKIP_PPSTRUCTURE_REFINE=1`` to skip the PP-StructureV3 pass when VRAM is tight.
 
     Parameters
     ----------

@@ -266,6 +266,33 @@ def wrap_inline_math(text: str) -> str:
     return "\n".join(lines)
 
 
+# Matches bare degree superscripts like  0^\circ  or  90^\circ  outside $...$
+# so they can be wrapped in $...$ for uniform LaTeX rendering.
+_BARE_DEGREE_RE = re.compile(
+    r"(?<!\$)"             # not already inside a math span
+    r"(\d+(?:\.\d+)?)"     # number
+    r"\^\\circ"            # bare ^\circ
+    r"(?!\s*\$)"           # not followed by a closing $
+)
+
+# Matches spacing artefacts around subscripts from the alloy normalizer:
+# e.g.  Co $ _{30} $ Fe  ->  Co$_{30}$Fe
+_SPACED_INLINE_MATH_RE = re.compile(
+    r"\$\s+"               # opening $ with trailing space
+    r"([^$]+?)"            # math content
+    r"\s+\$"               # closing $ with leading space
+)
+
+
+def _normalize_formula_consistency(text: str) -> str:
+    """Wrap bare degree superscripts in ``$...$`` and remove spurious spaces inside inline math."""
+    # 1. Wrap bare ^\circ occurrences: "90^\circ" -> "$90^{\\circ}$"
+    text = _BARE_DEGREE_RE.sub(r"$\1^{\\circ}$", text)
+    # 2. Remove leading/trailing spaces inside $...$ spans
+    text = _SPACED_INLINE_MATH_RE.sub(r"$\1$", text)
+    return text
+
+
 def format_formula_text(text: str) -> str:
     """Apply all formula formatting transformations.
     
@@ -275,6 +302,8 @@ def format_formula_text(text: str) -> str:
        outside ``$...$`` and with a stricter rule for integer-only subscripts
     3. Math symbol conversion
     4. Scientific notation formatting
+    5. Consistency cleanup: bare degree superscripts wrapped in ``$...$``,
+       spurious spaces inside inline ``$...$`` removed
     
     Latin-word subscript guessing (e.g. Materials → M_{ATERIALS}) is not used;
     alloy / multi-element chemistry is handled in ``normalize_alloy_strings``.
@@ -300,7 +329,10 @@ def format_formula_text(text: str) -> str:
     
     # Step 4: Format scientific notation
     text = format_scientific_notation(text)
-    
+
+    # Step 5: Consistency cleanup
+    text = _normalize_formula_consistency(text)
+
     return text
 
 

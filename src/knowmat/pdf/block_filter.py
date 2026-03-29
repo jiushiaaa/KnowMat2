@@ -81,7 +81,7 @@ def _overlap_fraction(block_bbox: List[float], figure_bbox: List[float]) -> floa
 
 def filter_figure_internal_fragments(
     ocr_items: List[Dict[str, Any]],
-) -> Tuple[List[Dict[str, Any]], int]:
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Remove paragraph/text fragments that lie inside figure bounding boxes.
 
     Parameters
@@ -93,11 +93,12 @@ def filter_figure_internal_fragments(
     -------
     filtered_items:
         The filtered list with internal figure fragments removed.
-    removed_count:
-        Number of items that were removed.
+    removed_items:
+        The items that were removed (callers can use their ``text`` field to
+        strip the same fragments from the merged Markdown string).
     """
     if not ocr_items:
-        return ocr_items, 0
+        return ocr_items, []
 
     # Collect figure bboxes grouped by page.
     figure_bboxes_by_page: Dict[int, List[List[float]]] = {}
@@ -110,10 +111,10 @@ def filter_figure_internal_fragments(
                 figure_bboxes_by_page.setdefault(page, []).append(list(bbox))
 
     if not figure_bboxes_by_page:
-        return ocr_items, 0
+        return ocr_items, []
 
     filtered: List[Dict[str, Any]] = []
-    removed = 0
+    removed: List[Dict[str, Any]] = []
 
     for item in ocr_items:
         label = item.get("block_label", "") or item.get("typer", "")
@@ -153,7 +154,7 @@ def filter_figure_internal_fragments(
                 bbox,
                 item.get("text", ""),
             )
-            removed += 1
+            removed.append(item)
         else:
             filtered.append(item)
 

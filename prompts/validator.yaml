@@ -29,6 +29,13 @@ system: |
   - aggregation_rationale: explain validated/corrected decisions
   - human_review_guide: numbered specific verification items
 
+paper_text_prefix: |
+  ORIGINAL PAPER TEXT (excerpt, for cross-referencing):
+  ────────────────────────────────────────────────────────────────────────────────
+
+paper_text_suffix: |
+  ────────────────────────────────────────────────────────────────────────────────
+
 stage1_notes_prefix: |
   STAGE 1 AGGREGATION NOTES:
 

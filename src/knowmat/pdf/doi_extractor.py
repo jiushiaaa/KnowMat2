@@ -28,6 +28,9 @@ def extract_first_doi(text: str) -> Optional[str]:
 def extract_first_doi_from_ocr_items(items: Optional[List[Dict[str, Any]]]) -> Optional[str]:
     """Scan paragraph texts in OCR block list (same structure as stem ``.json``).
 
+    Paragraphs tagged with ``role == "doi"`` are still ``typer == "paragraph"``; resolution
+    uses the same :func:`extract_first_doi` as that tagging, in document order.
+
     ``_to_markdown`` / merged page text can omit lines that still exist on
     ``parsing_res_list`` blocks; this recovers DOIs and similar identifiers.
     """

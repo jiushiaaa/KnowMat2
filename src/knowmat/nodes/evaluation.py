@@ -49,11 +49,17 @@ def evaluate_data(state: KnowMatState) -> Dict[str, Any]:
     extracted_data = state.get("latest_extracted_data", {})
     run_count = state.get("run_count", 0)
 
+    # Truncate paper_text to a configurable excerpt length to keep token usage bounded.
+    # Default 6000 chars (~1500 tokens) is enough for abstract + key sections.
+    _excerpt_chars = int(os.getenv("KNOWMAT_EVAL_PAPER_TEXT_CHARS", "6000"))
+    paper_text_excerpt = paper_text[:_excerpt_chars] if paper_text else ""
+
     # Build the evaluation prompt from external templates
     templates = _EVAL_TEMPLATES
     system_prompt = templates["system"]
     user_prompt = templates["user_template"].format(
-        extracted_data=json.dumps(extracted_data, ensure_ascii=False, indent=2)
+        extracted_data=json.dumps(extracted_data, ensure_ascii=False, indent=2),
+        paper_text_excerpt=paper_text_excerpt,
     )
     evaluation_prompt = system_prompt.strip() + "\n\n" + user_prompt.strip()
 

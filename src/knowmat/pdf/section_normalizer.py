@@ -144,11 +144,19 @@ def _process_author_front_matter_line(line: str) -> str:
     return line
 
 
+_AUTHOR_FRONT_MATTER_MAX_LINES = 80
+
+
 def normalize_plain_author_superscripts(text: str) -> str:
     """Normalize plain-text author markers and affiliation prefixes before Abstract.
 
     Converts trailing ' a,b' on names to ``$^{a,b}$`` and ``a Institution`` lines
     to ``$^{a}$ Institution`` (Elsevier-style OCR without HTML <sup>).
+
+    Only processes the head of the document up to the first section anchor
+    (ABSTRACT / Introduction / etc.) and at most the first
+    ``_AUTHOR_FRONT_MATTER_MAX_LINES`` lines, so that the entire body is never
+    mistakenly treated as front-matter when the anchor is absent.
     """
     lines = text.split("\n")
     end = len(lines)
@@ -156,6 +164,8 @@ def normalize_plain_author_superscripts(text: str) -> str:
         if _AUTHOR_FRONT_MATTER_END_RE.match(ln.strip()):
             end = i
             break
+    # Safety cap: never process more than _AUTHOR_FRONT_MATTER_MAX_LINES lines
+    end = min(end, _AUTHOR_FRONT_MATTER_MAX_LINES)
     if end <= 0:
         return text
     head = _merge_hanging_affiliation_suffix_lines(lines[:end])
@@ -312,7 +322,49 @@ _MASTHEAD_LINE_PATTERNS: List[re.Pattern[str]] = [
     re.compile(r"^journal homepage:\s*.*$", re.IGNORECASE),
     re.compile(r"^Check for\s*$", re.IGNORECASE),
     re.compile(r"^updates\s*$", re.IGNORECASE),
+    # IOP Publishing banners
+    re.compile(r"^IOP\s+Publishing\s*$", re.IGNORECASE),
+    re.compile(r"^IOP\s+ebooks", re.IGNORECASE),
+    re.compile(r"^You\s+may\s+also\s+like\s*$", re.IGNORECASE),
+    re.compile(r"^This\s+content\s+was\s+downloaded\s+from\s+IP\s+address", re.IGNORECASE),
+    re.compile(r"^Bringing\s+together\s+innovative\s+digital\s+publishing", re.IGNORECASE),
+    re.compile(r"^Start\s+exploring\s+the\s+collection", re.IGNORECASE),
+    re.compile(r"^View\s+the\s+article\s+online\s+for\s+updates", re.IGNORECASE),
+    re.compile(r"^To\s+cite\s+this\s+article:", re.IGNORECASE),
+    re.compile(r"^\(Some\s+figures\s+may\s+appear\s+in\s+colour", re.IGNORECASE),
+    # Springer / Nature banners
+    re.compile(r"^Received:\s*\d", re.IGNORECASE),
+    re.compile(r"^Accepted:\s*\d", re.IGNORECASE),
+    re.compile(r"^Published online:", re.IGNORECASE),
+    re.compile(r"^© The Author\(s\)", re.IGNORECASE),
+    re.compile(r"^open\s+access\s*$", re.IGNORECASE),
+    re.compile(r"^https?://doi\.org/", re.IGNORECASE),
+    # Wiley / Wiley-VCH banners
+    re.compile(r"^www\.advancedsciencenews\.com", re.IGNORECASE),
+    re.compile(r"^Adv\.\s+\w", re.IGNORECASE),
+    # MDPI banners
+    re.compile(r"^Citation:", re.IGNORECASE),
+    re.compile(r"^Academic\s+Editor:", re.IGNORECASE),
+    re.compile(r"^Copyright:", re.IGNORECASE),
+    # Generic OCR page-header fragments
+    re.compile(r"^PAPER\s*$", re.IGNORECASE),
+    re.compile(r"^ARTICLE\s*$", re.IGNORECASE),
+    re.compile(r"^LETTER\s*$", re.IGNORECASE),
+    re.compile(r"^REVIEW\s*$", re.IGNORECASE),
+    re.compile(r"^RESEARCH ARTICLE\s*$", re.IGNORECASE),
+    re.compile(r"^ORIGINAL RESEARCH\s*$", re.IGNORECASE),
 ]
+
+
+def is_masthead_line(line: str) -> bool:
+    """Return True if *line* matches a known publisher/journal masthead pattern.
+
+    Suitable for per-item role classification; does not require document context.
+    """
+    stripped = line.strip()
+    if not stripped:
+        return False
+    return any(p.match(stripped) for p in _MASTHEAD_LINE_PATTERNS)
 
 
 def strip_leading_journal_masthead(text: str) -> str:
@@ -920,6 +972,33 @@ def _strip_figure_legend_prefix_lines(lines: List[str]) -> List[str]:
     return out
 
 
+# Pattern: numbered section prefix glued to body text, e.g.
+# "2.5.1 Method Name Here is the first sentence of the body."
+# Groups: (section_number, section_title, body_start)
+_GLUED_HEADING_BODY_RE = re.compile(
+    r"^(\d+(?:\.\d+)*\.?)\s+"          # section number (e.g. "2.5.1" or "2.5.1.")
+    r"([A-Z][A-Za-z0-9 \-/]{2,60}?)"   # section title (Title Case, 3-60 chars)
+    r"\s{2,}"                           # TWO or more spaces as separator (OCR artefact)
+    r"([A-Z].{10,})$"                   # body sentence starts with capital, ≥10 chars
+)
+
+
+def _split_glued_heading_body(line: str) -> List[str]:
+    """If *line* is a numbered-section title glued to body text, split them.
+
+    Returns a list with [heading_line, body_line] or just [line] if no split.
+    """
+    m = _GLUED_HEADING_BODY_RE.match(line)
+    if not m:
+        return [line]
+    sec_num = m.group(1).rstrip(".")
+    sec_title = m.group(2).strip()
+    body = m.group(3).strip()
+    if _is_spurious_generic_numeric_section(sec_num, sec_title):
+        return [line]
+    return [f"## {sec_num}. {sec_title}", "", body]
+
+
 def structure_sections(text: str) -> str:
     """Structure document sections with proper heading levels.
     
@@ -933,6 +1012,14 @@ def structure_sections(text: str) -> str:
     for line in text.splitlines():
         stripped = line.strip()
         if is_noise_line(stripped):
+            continue
+
+        # Detect numbered-section title glued to body text on the same line (OCR layout artefact).
+        split_parts = _split_glued_heading_body(stripped)
+        if len(split_parts) > 1:
+            output_lines.append("")
+            output_lines.extend(split_parts)
+            output_lines.append("")
             continue
 
         # Markdown "heading" lines that are really body / chart fragments (often from prior passes)
@@ -1008,6 +1095,69 @@ def structure_sections(text: str) -> str:
     result = "\n".join(output_lines)
     result = re.sub(r"\n{3,}", "\n\n", result)
     return result.strip()
+
+
+def rejoin_broken_paragraphs(text: str) -> str:
+    """Merge paragraph lines that were split by page breaks or figure interruptions.
+
+    OCR pipelines sometimes break a sentence across pages or insert figure/table
+    labels between two halves of the same sentence.  This function re-joins
+    consecutive non-heading lines when the first line ends with a character that
+    strongly implies continuation (lower-case letter, comma, hyphen, opening
+    parenthesis, or conjunction word) and the next non-empty line starts with a
+    lower-case letter or a conjunction.
+
+    A blank line between two lines always prevents joining (blank lines mark
+    real paragraph boundaries in Markdown).
+
+    Heading lines (starting with ``#``) and lines that end with a period,
+    question mark, exclamation mark, or colon are never treated as
+    continuation candidates.
+    """
+    _CONTINUE_END_RE = re.compile(
+        r"(?:"
+        r"[a-z,;\-\(]"      # ends with lower-case, comma, semicolon, hyphen or open paren
+        r"|(?:and|or|of|in|to|the|a|an|for|with|by|from|that|which|at|on|is|are|was|were|be|been|being|as|its|their|this|these)\s*"
+        r")$",
+        re.IGNORECASE,
+    )
+    _CONTINUE_START_RE = re.compile(
+        r"^(?:"
+        r"[a-z]"            # starts with lower-case
+        r"|(?:and|or|of|in|to|the|a|an|for|with|by|from|that|which|at|on|is|are|was|were|be|been|being|as|its|their|this|these)\b"
+        r")",
+        re.IGNORECASE,
+    )
+    _HEADING_RE = re.compile(r"^#{1,6}\s")
+
+    paragraphs = text.split("\n\n")
+    result: List[str] = []
+    for para in paragraphs:
+        lines = para.splitlines()
+        if not lines:
+            result.append(para)
+            continue
+        merged_lines: List[str] = []
+        i = 0
+        while i < len(lines):
+            cur = lines[i]
+            cur_stripped = cur.strip()
+            if (
+                i + 1 < len(lines)
+                and cur_stripped
+                and not _HEADING_RE.match(cur_stripped)
+                and _CONTINUE_END_RE.search(cur_stripped)
+            ):
+                nxt = lines[i + 1]
+                nxt_stripped = nxt.strip()
+                if nxt_stripped and not _HEADING_RE.match(nxt_stripped) and _CONTINUE_START_RE.match(nxt_stripped):
+                    merged_lines.append(cur_stripped + " " + nxt_stripped)
+                    i += 2
+                    continue
+            merged_lines.append(cur)
+            i += 1
+        result.append("\n".join(merged_lines))
+    return "\n\n".join(result)
 
 
 def strip_references_section(text: str) -> str:

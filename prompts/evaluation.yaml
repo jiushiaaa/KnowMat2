@@ -12,16 +12,21 @@ system: |
 
 user_template: |
   You are given:
+    - the original paper text excerpt (for cross-referencing)
     - the latest extracted data (JSON)
     - the previous run history
-    - the original paper text
 
-  Carefully review the extracted data and answer using the evaluation tool with fields:
+  Carefully review the extracted data **against the original paper text** and answer
+  using the evaluation tool with fields:
     - confidence_score (0.0–1.0)
-    - rationale (short but precise explanation)
+    - rationale (short but precise explanation, citing specific evidence from the text)
     - missing_fields (list of field paths that are clearly missing)
-    - hallucinated_fields (list of field paths likely hallucinated)
+    - hallucinated_fields (list of field paths likely hallucinated or not supported by text)
     - update_prompt (short instructions to improve the next extraction)
+
+  === ORIGINAL PAPER TEXT (excerpt) ===
+  {paper_text_excerpt}
+  === END OF PAPER TEXT ===
 
   Now evaluate the following extraction:
   ---
