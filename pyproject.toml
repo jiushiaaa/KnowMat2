@@ -14,8 +14,6 @@ authors = [
 ]
 dependencies = [
   # LangChain & Orchestration
-  "langchain>=0.3.0",
-  "langchain-community>=0.3.0",
   "langchain-openai>=0.3.0",
   "langgraph>=0.2.0",
   "trustcall>=0.0.5",
@@ -42,11 +40,6 @@ dependencies = [
   
   # Core utilities
   "tqdm>=4.66",
-  "click>=8.0",
-  "rich>=13.0",
-  "pandas>=2.0",
-  "pillow>=10.0",
-  "markdownify>=0.13",
   
   # Composition parsing
   "pymatgen",

@@ -14,3 +14,6 @@
 - Unified regression diff default AI output directory to `data/output`.
 - Added optional `standardization` extra for heavy vector/torch dependencies.
 - Added basic CI workflow running lint, type checks and tests.
+- Marked the legacy `parse_pdf_with_docling` alias as deprecated while preserving compatibility.
+- Added a local compatibility shim to avoid `trustcall` importing `Send` through LangGraph's deprecated path.
+- Replaced direct `print()` calls in validator, evaluation and aggregator nodes with module-level logging.

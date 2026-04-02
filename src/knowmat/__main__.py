@@ -40,6 +40,14 @@ def _ensure_utf8_output() -> None:
     except Exception:
         pass
 
+def _echo(message: str = "") -> None:
+    sys.stdout.write(f"{message}\n")
+    sys.stdout.flush()
+
+def _echo_err(message: str = "") -> None:
+    sys.stderr.write(f"{message}\n")
+    sys.stderr.flush()
+
 def _run_with_elapsed_progress(description: str, current_file: str, fn, *args, **kwargs):
     """Run fn in a thread and print progress periodically."""
     result_holder: list = []
@@ -59,7 +67,7 @@ def _run_with_elapsed_progress(description: str, current_file: str, fn, *args, *
         if not th.is_alive():
             break
         mins = int((time.time() - start) / 60)
-        print(f"... {description} 仍在处理中 (当前: {current_file}, 已等待约 {mins} 分钟)")
+        _echo(f"... {description} 仍在处理中 (当前: {current_file}, 已等待约 {mins} 分钟)")
     th.join()
     if exc_holder:
         raise exc_holder[0]
@@ -133,24 +141,24 @@ def main(argv: list[str] | None = None) -> None:
     input_folder = Path(input_folder_arg)
     if not input_folder.exists():
         # 若目录不存在，则创建空目录并提示用户
-        print(f"Input folder not found, creating: {input_folder}")
+        _echo(f"Input folder not found, creating: {input_folder}")
         input_folder.mkdir(parents=True, exist_ok=True)
     
     if not input_folder.is_dir():
-        print(f"Error: Path is not a directory: {input_folder}")
+        _echo_err(f"Error: Path is not a directory: {input_folder}")
         return
 
     if args.clear_ocr_cache:
         from knowmat.pdf.ocr_cache import clear_all_ocr_caches_under
 
         cleared = clear_all_ocr_caches_under(input_folder)
-        print(f"Cleared {cleared} _ocr_cache director(y/ies) under {input_folder}.")
+        _echo(f"Cleared {cleared} _ocr_cache director(y/ies) under {input_folder}.")
 
     # OCR 中间产物（.md / .json）始终在 input_folder 下按论文子目录存放（如 data/raw/论文A/论文A.md）
     # 抽取结果（extraction JSON、报告等）写入 output_dir，默认 data/output，与 raw 分离
     extraction_output_dir = args.output_dir if args.output_dir else settings.output_dir
-    print(f"Input (raw + OCR intermediates): {input_folder}")
-    print(f"Extraction output:               {extraction_output_dir}")
+    _echo(f"Input (raw + OCR intermediates): {input_folder}")
+    _echo(f"Extraction output:               {extraction_output_dir}")
 
     pdf_files = sorted(
         [p for p in input_folder.iterdir() if p.is_file() and p.suffix.lower() == ".pdf"],
@@ -182,8 +190,8 @@ def main(argv: list[str] | None = None) -> None:
     existing_txt_files = sorted(text_by_stem.values(), key=lambda x: x.name.lower())
 
     if not pdf_files and not existing_txt_files:
-        print(f"Error: No supported files (.pdf/.txt/.md) found in: {input_folder}")
-        print("Please place your PDF/TXT/MD files into this folder or specify --input-folder explicitly.")
+        _echo_err(f"Error: No supported files (.pdf/.txt/.md) found in: {input_folder}")
+        _echo_err("Please place your PDF/TXT/MD files into this folder or specify --input-folder explicitly.")
         return
 
     if args.only:
@@ -193,36 +201,36 @@ def main(argv: list[str] | None = None) -> None:
         pdf_files = [p for p in pdf_files if p.stem in requested or p.name in requested]
         existing_txt_files = [p for p in existing_txt_files if p.stem in requested or p.name in requested]
         if not pdf_files and not existing_txt_files:
-            print(f"Error: No files matched --only filter in: {input_folder}")
-            print(f"Requested: {', '.join(sorted(requested))}")
+            _echo_err(f"Error: No files matched --only filter in: {input_folder}")
+            _echo_err(f"Requested: {', '.join(sorted(requested))}")
             return
         else:
-            print(f"\nFiltered files with --only (pdf: {before_pdf} -> {len(pdf_files)}, txt: {before_txt} -> {len(existing_txt_files)})")
+            _echo(f"\nFiltered files with --only (pdf: {before_pdf} -> {len(pdf_files)}, txt: {before_txt} -> {len(existing_txt_files)})")
 
     txt_by_stem = {p.stem: p for p in existing_txt_files}
     # 强制重跑时对所有 PDF 重新 OCR；否则仅对尚无 .md/.txt 的 PDF 做 OCR
     pdfs_missing_txt = list(pdf_files) if args.force_rerun else [p for p in pdf_files if p.stem not in txt_by_stem]
 
     if not existing_txt_files and not pdfs_missing_txt:
-        print(f"Error: No text/markdown files available for processing in: {input_folder}")
+        _echo_err(f"Error: No text/markdown files available for processing in: {input_folder}")
         return
 
     if args.ocr_only:
         if not pdfs_missing_txt:
-            print("No PDFs need OCR (all have corresponding .md/.txt). Nothing to do.")
+            _echo("No PDFs need OCR (all have corresponding .md/.txt). Nothing to do.")
             return
-        print(f"\n[OCR-only] Queued {len(pdfs_missing_txt)} PDFs for OCR (no LLM extraction).")
+        _echo(f"\n[OCR-only] Queued {len(pdfs_missing_txt)} PDFs for OCR (no LLM extraction).")
     else:
         if existing_txt_files:
-            print(f"\nQueued {len(existing_txt_files)} existing text files for extraction")
+            _echo(f"\nQueued {len(existing_txt_files)} existing text files for extraction")
         if pdfs_missing_txt:
-            print(f"Queued {len(pdfs_missing_txt)} PDFs for OCR")
+            _echo(f"Queued {len(pdfs_missing_txt)} PDFs for OCR")
 
     # 计算当前运行实际使用的输出根目录（CLI 参数优先于配置默认值）
 
     def _ocr_pdf_to_md(pdf: Path) -> Path | None:
         stem = pdf.stem
-        print(f"\nNo MD found for {pdf.name}. Running OCR to create {stem}.md ...")
+        _echo(f"\nNo MD found for {pdf.name}. Running OCR to create {stem}.md ...")
         paper_dir = input_folder / stem
         paper_dir.mkdir(parents=True, exist_ok=True)
         parse_output_dir = paper_dir
@@ -237,25 +245,25 @@ def main(argv: list[str] | None = None) -> None:
         try:
             result = _run_with_elapsed_progress("OCR", pdf.name, parse_pdf_with_paddleocrvl, state)
         except Exception as exc:
-            print(f"[ERROR] Failed to OCR {pdf.name}: {exc}")
+            _echo(f"[ERROR] Failed to OCR {pdf.name}: {exc}")
             return None
         text = result.get("paper_text") if isinstance(result, dict) else None
         if not text:
-            print(f"[ERROR] OCR returned no text for {pdf.name}, skipping.")
+            _echo(f"[ERROR] OCR returned no text for {pdf.name}, skipping.")
             return None
         md_path = paper_dir / f"{stem}.md"
         md_path.write_text(text, encoding="utf-8")
-        print(f"Saved OCR markdown to: {md_path}")
+        _echo(f"Saved OCR markdown to: {md_path}")
         ocr_items = result.get("ocr_items") if isinstance(result, dict) else None
         if ocr_items is None:
             ocr_items = []
         json_path = paper_dir / f"{stem}.json"
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(ocr_items, f, ensure_ascii=False, indent=2)
-        print(f"Saved OCR structured output to: {json_path}")
+        _echo(f"Saved OCR structured output to: {json_path}")
         pages = result.get("metadata", {}).get("pages") if isinstance(result, dict) else None
         if pages is not None:
-            print(f"[OCR] 完成; {pdf.name}: {pages} 页")
+            _echo(f"[OCR] 完成; {pdf.name}: {pages} 页")
         return md_path
 
     def _ensure_md(text_path: Path) -> Path | None:
@@ -276,33 +284,33 @@ def main(argv: list[str] | None = None) -> None:
         try:
             result = _run_with_elapsed_progress("TXT->MD", text_path.name, parse_pdf_with_paddleocrvl, state)
         except Exception as exc:
-            print(f"[ERROR] Failed to normalize {text_path.name}: {exc}")
+            _echo(f"[ERROR] Failed to normalize {text_path.name}: {exc}")
             return None
         text = result.get("paper_text") if isinstance(result, dict) else None
         if not text:
-            print(f"[ERROR] Normalization returned no text for {text_path.name}, skipping.")
+            _echo(f"[ERROR] Normalization returned no text for {text_path.name}, skipping.")
             return None
         md_path.write_text(text, encoding="utf-8")
-        print(f"Saved normalized markdown to: {md_path}")
+        _echo(f"Saved normalized markdown to: {md_path}")
         return md_path
 
     def _log_summary(summary: dict) -> None:
         if summary.get("success"):
             if summary.get("skipped"):
-                print(f"\nSkipped (already processed): {summary.get('file')}")
-                print(f"   Output: {summary.get('output_dir')}")
-                print(f"   Materials: {summary.get('compositions', 0)}")
+                _echo(f"\nSkipped (already processed): {summary.get('file')}")
+                _echo(f"   Output: {summary.get('output_dir')}")
+                _echo(f"   Materials: {summary.get('compositions', 0)}")
             else:
                 flag_str = "[FLAGGED]" if summary.get("flag") else "[OK]"
-                print(f"\nFinished extraction: {summary.get('file')}")
-                print(f"   Status: {flag_str}")
-                print(f"   Output: {summary.get('output_dir')}")
-                print(f"   Materials: {summary.get('compositions', 0)}")
+                _echo(f"\nFinished extraction: {summary.get('file')}")
+                _echo(f"   Status: {flag_str}")
+                _echo(f"   Output: {summary.get('output_dir')}")
+                _echo(f"   Materials: {summary.get('compositions', 0)}")
         else:
             err = summary.get("error", "")
-            print(f"\nError processing {summary.get('file')}: {err}")
+            _echo(f"\nError processing {summary.get('file')}: {err}")
             if "401" in err and ("invalid_model" in err or "does not exist" in err.lower()):
-                print("   → 请检查 .env：LLM_MODEL 需为千帆控制台创建的端点 ID（如 ep_xxxxx），且当前账号有该模型/端点访问权限。")
+                _echo("   → 请检查 .env：LLM_MODEL 需为千帆控制台创建的端点 ID（如 ep_xxxxx），且当前账号有该模型/端点访问权限。")
 
     root_output_dir = Path(extraction_output_dir)
 
@@ -318,7 +326,7 @@ def main(argv: list[str] | None = None) -> None:
                     compositions_count = len(items)
                 except Exception:
                     compositions_count = 0
-                print(f"Skipping {file_path.name}: existing extraction found at {extraction_path}")
+                _echo(f"Skipping {file_path.name}: existing extraction found at {extraction_path}")
                 return {
                     "file": file_path.name,
                     "success": True,
@@ -370,16 +378,16 @@ def main(argv: list[str] | None = None) -> None:
         if total_gb > 0:
             # GPU detected - warn if ocr_workers > 1
             if ocr_workers > 1:
-                print(f"\nWarning: GPU detected ({total_gb:.1f} GB). Forcing --ocr-workers to 1 to prevent GPU resource contention.")
+                _echo(f"\nWarning: GPU detected ({total_gb:.1f} GB). Forcing --ocr-workers to 1 to prevent GPU resource contention.")
                 ocr_workers = 1
-            print(f"GPU Memory: {used_gb:.1f}/{total_gb:.1f} GB used")
+            _echo(f"GPU Memory: {used_gb:.1f}/{total_gb:.1f} GB used")
     except Exception:
         pass
     
     # Also check for LLM workers - multiple concurrent LLM calls can overwhelm API limits
     if workers > 1:
-        print(f"\nNote: --workers={workers} will run {workers} LLM extractions concurrently.")
-        print("      If you encounter rate limits, consider reducing to --workers 1.")
+        _echo(f"\nNote: --workers={workers} will run {workers} LLM extractions concurrently.")
+        _echo("      If you encounter rate limits, consider reducing to --workers 1.")
 
     with ThreadPoolExecutor(max_workers=workers) as llm_pool, ThreadPoolExecutor(max_workers=ocr_workers) as ocr_pool:
         llm_futures = {}
@@ -403,7 +411,7 @@ def main(argv: list[str] | None = None) -> None:
             ocr_futures[ocr_pool.submit(_ocr_pdf_to_md, pdf)] = pdf
 
         if not llm_futures and not ocr_futures:
-            print(f"Error: No work to process in: {input_folder}")
+            _echo_err(f"Error: No work to process in: {input_folder}")
             return
 
         while ocr_futures or llm_futures:
@@ -414,7 +422,7 @@ def main(argv: list[str] | None = None) -> None:
                     try:
                         txt_path = fut.result()
                     except Exception as exc:
-                        print(f"[ERROR] OCR failed for {pdf.name}: {exc}")
+                        _echo(f"[ERROR] OCR failed for {pdf.name}: {exc}")
                         results_summary.append({"file": pdf.name, "success": False, "error": f"OCR failed: {exc}"})
                         continue
                     if args.ocr_only:
@@ -432,43 +440,43 @@ def main(argv: list[str] | None = None) -> None:
                     results_summary.append(summary)
                     _log_summary(summary)
     # Print final summary
-    print(f"\n{'='*60}")
+    _echo(f"\n{'='*60}")
     if args.ocr_only:
-        print("OCR-ONLY SUMMARY")
+        _echo("OCR-ONLY SUMMARY")
     else:
-        print("PROCESSING SUMMARY")
-    print(f"{'='*60}\n")
+        _echo("PROCESSING SUMMARY")
+    _echo(f"{'='*60}\n")
 
     successful = sum(1 for r in results_summary if r["success"])
     failed = len(results_summary) - successful
 
-    print(f"Total files: {len(results_summary)}")
-    print(f"Successful: {successful}")
-    print(f"Failed: {failed}")
+    _echo(f"Total files: {len(results_summary)}")
+    _echo(f"Successful: {successful}")
+    _echo(f"Failed: {failed}")
 
     if not args.ocr_only and successful > 0:
         flagged = sum(1 for r in results_summary if r["success"] and r.get("flag"))
-        print(f"Flagged for review: {flagged}")
+        _echo(f"Flagged for review: {flagged}")
         total_compositions = sum(r.get("compositions", 0) for r in results_summary if r["success"])
-        print(f"Total materials: {total_compositions}")
+        _echo(f"Total materials: {total_compositions}")
 
     if args.ocr_only:
-        print("\nOCR output: each PDF -> <input-folder>/<stem>/<stem>.md and <stem>.json")
-        print("Run again without --ocr-only to run LLM extraction on these .md files.")
-    print(f"\n{'='*60}\n")
+        _echo("\nOCR output: each PDF -> <input-folder>/<stem>/<stem>.md and <stem>.json")
+        _echo("Run again without --ocr-only to run LLM extraction on these .md files.")
+    _echo(f"\n{'='*60}\n")
 
     # Print individual results
     for r in results_summary:
         if r["success"]:
             if args.ocr_only:
-                print(f"[OK] {r['file']}: OCR done -> <stem>.md + <stem>.json")
+                _echo(f"[OK] {r['file']}: OCR done -> <stem>.md + <stem>.json")
             elif r.get("skipped"):
-                print(f"[SKIPPED] {r['file']}: {r.get('compositions', 0)} materials (already processed)")
+                _echo(f"[SKIPPED] {r['file']}: {r.get('compositions', 0)} materials (already processed)")
             else:
                 flag_icon = "[FLAGGED]" if r.get("flag") else "[OK]"
-                print(f"{flag_icon} {r['file']}: {r.get('compositions', 0)} materials")
+                _echo(f"{flag_icon} {r['file']}: {r.get('compositions', 0)} materials")
         else:
-            print(f"[ERROR] {r['file']}: {r.get('error', 'Unknown error')}")
+            _echo(f"[ERROR] {r['file']}: {r.get('error', 'Unknown error')}")
 
 
 if __name__ == "__main__":  # pragma: no cover

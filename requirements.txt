@@ -8,8 +8,6 @@
 -e .
 
 # LangChain & Orchestration
-langchain==0.3.26
-langchain-community==0.3.27
 langchain-openai==0.3.27
 langgraph==0.6.10
 trustcall==0.0.39
@@ -39,12 +37,7 @@ PyYAML>=6.0
 
 # Core utilities (from pyproject.toml dependencies)
 tqdm>=4.66
-click>=8.0
-rich>=13.0
-pandas>=2.0
-pillow>=10.0
 pdfminer.six>=20221105
-markdownify>=0.13
 
 # Composition parsing (optional, used in schema_converter.py)
 pymatgen

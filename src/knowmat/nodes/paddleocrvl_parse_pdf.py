@@ -705,7 +705,7 @@ def _finalize_pdf_parse(
         final_md_path = parse_output_dir / f"{pdf_name}_final_output.md"
         with open(final_md_path, "w", encoding="utf-8") as f:
             f.write(cleaned_text)
-        print(f"Saved final markdown output to: {final_md_path}")
+        logger.info("Saved final markdown output to: %s", final_md_path)
 
     doc_meta = {
         "backend": metadata.get("backend", "paddleocrvl"),
@@ -719,7 +719,7 @@ def _finalize_pdf_parse(
         meta_path = parse_output_dir / f"{pdf_name}_parse_metadata.json"
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
-        print(f"Saved parser metadata to: {meta_path}")
+        logger.info("Saved parser metadata to: %s", meta_path)
     return {
         "paper_text": cleaned_text,
         "document_metadata": doc_meta,
@@ -778,7 +778,7 @@ def parse_pdf_with_paddleocrvl(state: KnowMatState) -> dict:
             final_md_path = parse_output_dir / f"{stem}_final_output.md"
             with open(final_md_path, "w", encoding="utf-8") as f:
                 f.write(cleaned_text)
-            print(f"Saved txt parsed output to: {final_md_path}")
+            logger.info("Saved txt parsed output to: %s", final_md_path)
 
         doc_meta: Dict[str, Any] = {
             "backend": "txt-direct",
@@ -790,7 +790,7 @@ def parse_pdf_with_paddleocrvl(state: KnowMatState) -> dict:
             meta_path = parse_output_dir / f"{stem}_parse_metadata.json"
             with open(meta_path, "w", encoding="utf-8") as f:
                 json.dump(doc_meta, f, ensure_ascii=False, indent=2)
-            print(f"Saved parser metadata to: {meta_path}")
+            logger.info("Saved parser metadata to: %s", meta_path)
         ocr_items_out: List[Dict[str, Any]]
         if sidecar_items:
             ocr_items_out = list(sidecar_items)

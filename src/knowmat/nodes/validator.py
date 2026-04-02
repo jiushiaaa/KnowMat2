@@ -20,9 +20,10 @@ Inputs from Stage 1:
 """
 
 import json
+import logging
 from typing import Dict, Any
 
-from knowmat.extractors import manager_extractor, ManagerFeedback, CompositionList
+from knowmat.extractors import manager_extractor, ManagerFeedback
 from knowmat.prompt_loader import load_yaml_templates_required
 from knowmat.states import KnowMatState, load_run_extraction
 
@@ -36,6 +37,8 @@ _VALIDATOR_TEMPLATES = load_yaml_templates_required(
         "validation_tail",
     ),
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _first_response(result: Dict[str, Any]) -> Any:
@@ -138,12 +141,14 @@ def validate_and_correct(state: KnowMatState) -> Dict[str, Any]:
     paper_text = state.get("paper_text", "")
     
     if not aggregated_data or not aggregated_data.get("compositions"):
-        # Empty aggregation - fallback
-        print("Warning: Stage 1 aggregation returned empty data. Using fallback.")
+        logger.warning("Stage 1 aggregation returned empty data. Using fallback.")
         return _fallback_to_best_run(run_results)
     
-    print(f"\nValidation Stage 2:")
-    print(f"  Validating {len(aggregated_data.get('compositions', []))} aggregated compositions...")
+    logger.info("Validation Stage 2:")
+    logger.info(
+        "  Validating %s aggregated compositions...",
+        len(aggregated_data.get("compositions", [])),
+    )
     
     # Build validation prompt with ALL the hallucination correction logic
     # This is the COMPLETE prompt from the original manager
@@ -159,7 +164,7 @@ def validate_and_correct(state: KnowMatState) -> Dict[str, Any]:
     response = _first_response(result)
     
     if response is None:
-        print("Warning: Validation LLM returned no response. Using fallback.")
+        logger.warning("Validation LLM returned no response. Using fallback.")
         return _fallback_to_best_run(run_results)
     
     # Convert response to dict
@@ -176,7 +181,7 @@ def validate_and_correct(state: KnowMatState) -> Dict[str, Any]:
     # Ensure proper data structure
     final_data = _coerce_final_extracted_data(final_extracted_data)
     if final_data is None:
-        print("Warning: Validation returned invalid data structure. Using fallback.")
+        logger.warning("Validation returned invalid data structure. Using fallback.")
         return _fallback_to_best_run(run_results)
     
     # ═══════════════════════════════════════════════════════════════════════
@@ -210,19 +215,28 @@ def validate_and_correct(state: KnowMatState) -> Dict[str, Any]:
     )
     
     if is_placeholder_response:
-        print("  Warning: Validator returned empty/placeholder response.")
-        print(f"    Compositions: {len(compositions)}, Rationale length: {len(aggregation_rationale)}")
-        print(f"    Triggers: no_comps={has_no_compositions}, trivial_rationale={has_trivial_rationale}, ")
-        print(f"              todo_markers={has_todo_markers}, trivial_review={has_trivial_review}")
+        logger.warning("  Validator returned empty/placeholder response.")
+        logger.warning(
+            "    Compositions: %s, Rationale length: %s",
+            len(compositions),
+            len(aggregation_rationale),
+        )
+        logger.warning(
+            "    Triggers: no_comps=%s, trivial_rationale=%s, todo_markers=%s, trivial_review=%s",
+            has_no_compositions,
+            has_trivial_rationale,
+            has_todo_markers,
+            has_trivial_review,
+        )
         if has_todo_markers:
-            print(f"    First 200 chars of rationale: {aggregation_rationale[:200]}")
-        print("  Using fallback aggregation.")
+            logger.warning("    First 200 chars of rationale: %s", aggregation_rationale[:200])
+        logger.warning("  Using fallback aggregation.")
         return _fallback_to_best_run(run_results)
     
     if is_lazy_fallback:
-        print("  Warning: Validator chose lazy fallback despite good data.")
-        print(f"    Avg run confidence: {avg_run_confidence:.2f}")
-        print("  Retrying with stronger instructions...")
+        logger.warning("  Validator chose lazy fallback despite good data.")
+        logger.warning("    Avg run confidence: %.2f", avg_run_confidence)
+        logger.info("  Retrying with stronger instructions...")
         
         # Retry with stronger prompt (EXACT logic from original manager)
         retry_result = _retry_validation_with_explicit_schema(
@@ -234,14 +248,16 @@ def validate_and_correct(state: KnowMatState) -> Dict[str, Any]:
         )
         
         if retry_result:
-            print("  Retry successful!")
+            logger.info("  Retry successful!")
             return retry_result
         else:
-            print("  Retry failed. Using fallback.")
+            logger.warning("  Retry failed. Using fallback.")
             return _fallback_to_best_run(run_results)
 
     if _validator_collapsed_item_boundaries(aggregated_data, final_data):
-        print("  Warning: Validator collapsed distinct item boundaries. Preserving aggregated data.")
+        logger.warning(
+            "  Validator collapsed distinct item boundaries. Preserving aggregated data."
+        )
         return _preserve_aggregated_item_boundaries(
             aggregated_data,
             aggregation_notes,
@@ -250,7 +266,7 @@ def validate_and_correct(state: KnowMatState) -> Dict[str, Any]:
         )
     
     # Success - validation completed
-    print(f"  Validation complete: {len(compositions)} compositions validated")
+    logger.info("  Validation complete: %s compositions validated", len(compositions))
     
     # Combine aggregation notes with validation rationale
     combined_rationale = (

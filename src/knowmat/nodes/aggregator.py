@@ -20,8 +20,11 @@ NOT responsible for:
 """
 
 import json
+import logging
 from typing import Dict, Any, List
 from knowmat.states import KnowMatState, load_run_extraction
+
+logger = logging.getLogger(__name__)
 
 
 def aggregate_runs(state: KnowMatState) -> Dict[str, Any]:
@@ -72,17 +75,21 @@ def aggregate_runs(state: KnowMatState) -> Dict[str, Any]:
         reverse=True
     )
     
-    print(f"\nAggregation Stage 1:")
-    print(f"  Merging {len(run_results)} extraction runs...")
+    logger.info("Aggregation Stage 1:")
+    logger.info("  Merging %s extraction runs...", len(run_results))
     confidences = [f"{r.get('confidence_score', 0.0):.2f}" for r in sorted_runs]
-    print(f"  Run confidences: {confidences}")
+    logger.info("  Run confidences: %s", confidences)
     
     base_run = sorted_runs[0]
     base_data = load_run_extraction(base_run)
     base_compositions = base_data.get("compositions", [])
     
-    print(f"  Base run: ID {base_run.get('run_id')} (confidence {base_run.get('confidence_score', 0.0):.2f})")
-    print(f"  Base compositions: {len(base_compositions)}")
+    logger.info(
+        "  Base run: ID %s (confidence %.2f)",
+        base_run.get("run_id"),
+        base_run.get("confidence_score", 0.0),
+    )
+    logger.info("  Base compositions: %s", len(base_compositions))
     
     # Create a copy to modify
     merged_data = {"compositions": []}
@@ -154,8 +161,12 @@ def aggregate_runs(state: KnowMatState) -> Dict[str, Any]:
     
     total_compositions = len(merged_data["compositions"])
     
-    print(f"  Merged result: {total_compositions} compositions")
-    print(f"  Added from other runs: +{compositions_added} compositions, +{properties_merged} properties")
+    logger.info("  Merged result: %s compositions", total_compositions)
+    logger.info(
+        "  Added from other runs: +%s compositions, +%s properties",
+        compositions_added,
+        properties_merged,
+    )
     
     # Build aggregation notes
     notes = (
@@ -169,7 +180,7 @@ def aggregate_runs(state: KnowMatState) -> Dict[str, Any]:
     
     # Stage 1 is rule-based - no schema validation needed
     # Validation happens in Stage 2 (LLM-based validator)
-    print(f"  ✓ Aggregation complete (no validation - rule-based)")
+    logger.info("  Aggregation complete (no validation - rule-based)")
     
     return {
         "aggregated_data": merged_data,  # Pass merged data directly

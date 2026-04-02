@@ -17,8 +17,6 @@ dependencies:
   - scipy==1.16.0
   - pandas==2.3.2
   - tqdm==4.67.1
-  - click
-  - ipython
 
   # Visualization
   - matplotlib
@@ -33,15 +31,12 @@ dependencies:
   - nbdime
   - nbstripout
   - sphinx
-  - recommonmark
 
   - pip:
       # Project itself (editable installation)
       - -e .
 
       # LangChain & Orchestration
-      - langchain==0.3.26
-      - langchain-community==0.3.27
       - langchain-openai==0.3.27
       - langgraph==0.6.10
       - trustcall==0.0.39
@@ -71,10 +66,7 @@ dependencies:
       - PyYAML>=6.0
 
       # Core utilities (from pyproject.toml dependencies)
-      - rich>=13.0
-      - pillow>=10.0
       - pdfminer.six>=20221105
-      - markdownify>=0.13
 
       # Composition parsing
       - pymatgen

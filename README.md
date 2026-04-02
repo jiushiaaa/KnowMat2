@@ -706,7 +706,7 @@ print(f"Flagged: {result['flag']}")
     │   ├── section_normalizer.py / heading_detector.py
     │   └── doi_extractor.py
     └── nodes/                LangGraph 节点
-        ├── paddleocrvl_parse_pdf.py / docling_parse_pdf.py
+        ├── paddleocrvl_parse_pdf.py
         ├── subfield_detection.py / extraction.py / evaluation.py
         ├── aggregator.py / validator.py / schema_convert.py
         ├── standardize.py / flagging.py
@@ -719,9 +719,9 @@ print(f"Flagged: {result['flag']}")
 │   ├── setup_env.ps1 / setup_env.sh
 │   ├── download_paddleocrvl_models.py / download_paddleocrvl_1.0_models.py
 │   ├── ocr_regression_report.py / compare_paddleocrvl_truncation.py
-│   └── compare_to_manual.py / validate_prompts.py / train_model.py
+│   └── compare_to_manual.py / validate_prompts.py
 ├── tools/                    regression_diff.py 等（见 tools/README.md）
-├── tests/                    pytest：conftest、test_domain_rules、test_schema_converter、test_references_trimming
+├── tests/                    pytest：test_domain_rules、test_schema_converter、test_references_trimming
 ├── notebooks/                create_annotation.ipynb、template.ipynb
 ├── docs/                     Sphinx 与中文同步文档（conf.py、index.md、changelog.md 等）
 └── references/               项目内参考资料目录

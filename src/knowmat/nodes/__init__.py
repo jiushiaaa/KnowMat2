@@ -10,6 +10,5 @@ __all__ = [
     "flagging",
     "standardize",
     "schema_convert",
-    "docling_parse_pdf",
 ]
 

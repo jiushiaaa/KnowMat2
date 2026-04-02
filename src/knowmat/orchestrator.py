@@ -7,6 +7,7 @@ conversion logic lives in :mod:`knowmat.schema_converter` and report
 generation in :mod:`knowmat.report_writer`.
 """
 
+import logging
 import json
 import os
 import re
@@ -29,6 +30,9 @@ from knowmat.nodes.standardize import standardize_properties
 from knowmat.nodes.schema_convert import convert_to_target_schema
 from knowmat.app_config import Settings, settings
 from knowmat.config import _env_path
+
+
+logger = logging.getLogger(__name__)
 
 
 def sanitize_filename(name: str, max_length: int = 200) -> str:
@@ -177,7 +181,7 @@ def run(
     """
 
     if _env_path:
-        print(f"Loaded environment variables from: {_env_path}")
+        logger.info("Loaded environment variables from: %s", _env_path)
 
     # Build an isolated Settings instance for this run to avoid mutating
     # the module-level singleton in concurrent executions.
@@ -214,24 +218,24 @@ def run(
     if not flagging_model and not overrides.get("flagging_model"):
         effective_settings.flagging_model = effective_settings.model_name
 
-    print("\nModel Configuration:")
-    print(f"   Subfield Detection: {effective_settings.subfield_model}")
-    print(f"   Extraction:         {effective_settings.extraction_model}")
-    print(f"   Evaluation:         {effective_settings.evaluation_model}")
-    print("   Aggregation:        rule-based (no LLM)")
-    print(f"   Validation:         {effective_settings.manager_model}")
-    print(f"   Flagging:           {effective_settings.flagging_model}")
+    logger.info("Model Configuration:")
+    logger.info("   Subfield Detection: %s", effective_settings.subfield_model)
+    logger.info("   Extraction:         %s", effective_settings.extraction_model)
+    logger.info("   Evaluation:         %s", effective_settings.evaluation_model)
+    logger.info("   Aggregation:        rule-based (no LLM)")
+    logger.info("   Validation:         %s", effective_settings.manager_model)
+    logger.info("   Flagging:           %s", effective_settings.flagging_model)
 
     # Sanitize the base name to prevent path traversal issues
     raw_base_name = os.path.splitext(os.path.basename(pdf_path))[0]
     base_name = sanitize_filename(raw_base_name)
     if base_name != raw_base_name:
-        print(f"   Note: Filename sanitized: '{raw_base_name}' -> '{base_name}'")
+        logger.info("   Note: Filename sanitized: '%s' -> '%s'", raw_base_name, base_name)
     
     paper_output_dir = os.path.join(effective_settings.output_dir, base_name)
     os.makedirs(paper_output_dir, exist_ok=True)
 
-    print(f"\nOutput directory: {paper_output_dir}\n")
+    logger.info("Output directory: %s", paper_output_dir)
 
     state: KnowMatState = {
         "pdf_path": pdf_path,
@@ -260,12 +264,12 @@ def run(
     output_path = os.path.join(paper_output_dir, f"{base_name}_extraction.json")
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(final_data, f, ensure_ascii=False, indent=2)
-    print(f"Saved extraction to {output_path}")
+    logger.info("Saved extraction to %s", output_path)
 
     report_path = os.path.join(paper_output_dir, f"{base_name}_analysis_report.txt")
     with open(report_path, "w", encoding="utf-8") as f:
         write_comprehensive_report(f, final_state)
-    print(f"Saved analysis report to {report_path}")
+    logger.info("Saved analysis report to %s", report_path)
 
     runs_path = os.path.join(paper_output_dir, f"{base_name}_runs.json")
     with open(runs_path, "w", encoding="utf-8") as f:
@@ -277,12 +281,12 @@ def run(
     qa_path = os.path.join(paper_output_dir, f"{base_name}_qa_report.json")
     with open(qa_path, "w", encoding="utf-8") as f:
         json.dump(qa_report, f, ensure_ascii=False, indent=2)
-    print(f"Saved QA report to {qa_path}")
+    logger.info("Saved QA report to %s", qa_path)
 
     if qa_report.get("red_line_triggers"):
         triggers = qa_report["red_line_triggers"]
-        print(f"\n[RED LINE] QA check failed: {', '.join(triggers)}")
-        print(f"           Human review REQUIRED for {base_name}")
+        logger.warning("[RED LINE] QA check failed: %s", ", ".join(triggers))
+        logger.warning("Human review REQUIRED for %s", base_name)
 
     return {
         "final_data": final_data,

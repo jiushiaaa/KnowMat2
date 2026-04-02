@@ -28,8 +28,13 @@ import os
 import re
 import time
 from typing import List, Optional, Dict, Any
+
+import langgraph.constants as langgraph_constants
 from pydantic import BaseModel, Field, model_validator
 from langchain_openai import ChatOpenAI
+from langgraph.types import Send as LangGraphSend
+
+langgraph_constants.__dict__.setdefault("Send", LangGraphSend)
 from trustcall import create_extractor
 
 from knowmat.app_config import settings

@@ -15,6 +15,7 @@ should be accepted as‑is and sets ``needs_rerun`` to False.
 """
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Dict, Any, List
@@ -26,6 +27,8 @@ from knowmat.states import KnowMatState, EvaluationRun
 _EVAL_TEMPLATES = load_yaml_templates_required(
     "evaluation.yaml", ("system", "user_template")
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _build_evaluation_prompt(
@@ -117,8 +120,14 @@ def evaluate_data(state: KnowMatState) -> Dict[str, Any]:
     # Check for invalid evaluation: zero confidence AND empty rationale
     # This indicates the LLM failed to properly evaluate (technical error)
     if confidence == 0.0 and not rationale.strip():
-        print("⚠️  WARNING: Evaluation agent returned incomplete response (confidence=0.0, empty rationale)")
-        print(f"   This appears to be a technical error. Forcing rerun {run_count + 1}/{state.get('max_runs', 3)}")
+        logger.warning(
+            "Evaluation agent returned incomplete response (confidence=0.0, empty rationale)"
+        )
+        logger.warning(
+            "This appears to be a technical error. Forcing rerun %s/%s",
+            run_count + 1,
+            state.get("max_runs", 3),
+        )
         
         # Override the evaluation to force a rerun
         eval_dict["rationale"] = (

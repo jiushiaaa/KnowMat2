@@ -1,17 +1,8 @@
 # KnowMat
 
-Add a short description here!
+KnowMat 是一个面向材料科学文献的 AI 提取流水线，用于将 PDF、Markdown 与纯文本中的实验与材料信息转换为结构化数据。
 
-
-## Note
-
-> This is the main page of your project's [Sphinx] documentation. It is
-> formatted in [Markdown]. Add additional pages by creating md-files in
-> `docs` or rst-files (formatted in [reStructuredText]) and adding links to
-> them in the `Contents` section below.
->
-> Please check [Sphinx] and [MyST] for more information
-> about how to document your project and how to configure your preferences.
+文档涵盖项目概览、环境配置、平台支持、贡献指南与变更记录。
 
 
 ## Contents
@@ -24,7 +15,6 @@ Contributions & Help <contributing>
 License <license>
 Authors <authors>
 Changelog <changelog>
-Module Reference <api/modules>
 ```
 
 ## Indices and tables

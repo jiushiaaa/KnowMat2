@@ -119,6 +119,31 @@ def test_convert_bootstraps_datasheet_compositions_when_llm_returns_none():
     assert "Ti" in comp
 
 
+def test_convert_preserves_legacy_materials_envelope_support():
+    data = {
+        "Paper_Metadata": {"Paper_Title": "Legacy Sample", "DOI": "10.1000/legacy"},
+        "Materials": [
+            {
+                "Composition_Info": {
+                    "Alloy_Name": "Ti-6Al-4V",
+                    "Nominal_Composition": {
+                        "Formula": "Ti6Al4V",
+                        "Elements": {"Ti": 90.0, "Al": 6.0, "V": 4.0},
+                    },
+                },
+                "Properties_Info": [{"Property_Name": "Hardness", "Value": "350", "Unit": "HV"}],
+            }
+        ],
+    }
+    out = converter.convert(data, "legacy.md")
+    assert out["Paper_Metadata"]["Paper_Title"] == "Legacy Sample"
+    assert out["Paper_Metadata"]["DOI"] == "10.1000/legacy"
+    assert len(out["items"]) == 1
+    item = out["items"][0]
+    assert item["Composition_Info"]["Alloy_Name_Raw"] == "Ti-6Al-4V"
+    assert item["Composition_Info"]["Nominal_Composition"]["Elements_Normalized"]["Ti"] == 90.0
+
+
 def test_convert_expands_step_keyed_runtime_composition_maps():
     data = {
         "compositions": [
